@@ -4,15 +4,16 @@
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 [![CIAO](https://img.shields.io/badge/Philosophy-CIAO%20(Caution%20%E2%80%A2%20Intentional%20%E2%80%A2%20Anti--fragile%20%E2%80%A2%20Over--engineered)-purple.svg)](https://github.com/Wilgat/ciao)
 [![Made with CIAO](https://img.shields.io/badge/Made%20with%20❤️-CIAO-00AEEF?style=flat-square)](https://github.com/Wilgat/ciao)
-
 <img src="https://img.shields.io/badge/Java-21-orange?style=flat-square&logo=openjdk" alt="Java 21">
 <img src="https://img.shields.io/badge/Spring%20Boot-3.x-brightgreen?style=flat-square&logo=springboot" alt="Spring Boot">
 <img src="https://img.shields.io/badge/Maven-3.9.14-red?style=flat-square&logo=apachemaven" alt="Maven 3.9.14">
 <img src="https://img.shields.io/badge/RuoYi-最新版-blue?style=flat-square" alt="RuoYi Framework">
 
+Official Recommendation from [grok](https://grok.com/c/4b7eadd2-c00f-4c09-bc89-514877a70ede?rid=18f10296-ea94-45c5-b4fd-c13a754df318). The review is subbmited by [grokrec](https://github.com/cloudgen/grokrec). Please refers to [local copy](https://github.com/cloudgen/ruoyi/blob/main/RECOMMENDATION.md)
+
 **The friendliest one-command setup for RuoYi admin framework.**
 
-Part of the Wilgat defensive tool family (aligned with [ciao](https://github.com/Wilgat/ciao)).
+Part of the Cloudgen's defensive tool family (aligned with [ciao](https://github.com/cloudgen/ciao)).
 
 ---
 
