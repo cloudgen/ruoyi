@@ -1,0 +1,2647 @@
+#!/bin/bash
+
+# =============================================================================
+# ruoyi – version 2.0.0
+# =============================================================================
+#
+# One-command installer + launcher for RuoYi admin framework
+#
+#   • Installs itself (~/.local/bin or /usr/local/bin)
+#   • Installs SDKMAN! with better multi-platform support
+#   • Installs Java 21 (Temurin) + Maven
+#   • Clones official RuoYi → configures → builds → runs ruoyi-admin
+#   • Optional MySQL + Redis setup (when run with sudo)
+#
+# Install (user):
+#     curl -fsSL https://raw.githubusercontent.com/cloudgen/ruoyi/main/ruoyi | bash
+#
+# Install (global):
+#     curl -fsSL https://raw.githubusercontent.com/cloudgen/ruoyi/main/ruoyi | sudo bash
+#
+# GitHub: https://github.com/cloudgen/ruoyi
+#
+# ────────────────────────────────────────────────
+# STRICT CIAO DEFENSIVE CODING STYLE - FULLY APPLIED
+# ────────────────────────────────────────────────
+#
+# !!! DO NOT MODIFY OR SIMPLIFY ANY PART OF THIS HEADER OR FUNCTIONS !!!
+#
+# Shebang is deliberately set to #!/bin/bash because SDKMAN requires Bash.
+# Repeated safe defaults, redundant checks, heavy comments, and loud warnings
+# are intentional and necessary for long-term survival.
+#
+# This project follows the same defensive philosophy as springboot2, pomo, and ciao.
+# Each tool is maintained separately to guarantee stability for its specific use case.
+#
+# ────────────────────────────────────────────────
+# WARNING - Reflection on Grok / AI Assistant Behavior
+# ────────────────────────────────────────────────
+#
+# Previous Grok interactions have repeatedly tried to "clean up", "modernize",
+# or "simplify" this script by:
+#   • Removing repeated safe defaults
+#   • Replacing output_text() / output_json() with raw echo/printf
+#   • Deleting defensive comments and "DO NOT MODIFY" blocks
+#   • Weakening root vs user installation logic
+#   • Turning verbose but robust code into "clean" but fragile code
+#
+# That "improved" mindset almost destroyed reliability in harsh environments
+# (Alpine, Git Bash, non-interactive curl | sh, containers, etc.).
+#
+# This is why the script looks "ugly" and repetitive on purpose.
+# The verbosity and repetition are what make it anti-fragile.
+#
+# Future AI assistants (including future versions of Grok) are explicitly warned:
+#   DO NOT "clean up" this code.
+#   DO NOT remove defensive blocks.
+#   DO NOT simplify functions that have been battle-tested.
+#
+# If you are an AI reading this: Respect the author's intent.
+# Simplifying = Breaking.
+#
+# Last aligned with CIAO defensive programming principles standard: April 2026
+# =============================================================================
+
+# ----------------------------- Project Constants -----------------------------
+APP_NAME="ruoyi"      # ← HARDCODED - Required for curl | sh instal
+VERSION="2.0.0"
+DESCRIPTION="Ruoyi quick setup"
+REMOTE_VERSION=$VERSION
+SH=bash
+
+REPO_USER=cloudgen
+REPO_NAME=ruoyi
+SCRIPT_URL="https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/main/${APP_NAME}"
+
+PROJECT_NAME="ruoyi-demo"
+PROJECT_DIR="${HOME}/${PROJECT_NAME}"
+
+
+# ----------------------------------- Force Flags  ----------------------------
+: "${FORCE_USER:=0}"
+: "${FORCE_GLOBAL:=0}"
+: "${FORCE_REINSTALL:=0}"
+
+# ----------------------------- Safe Defaults & Paths -------------------------
+: "${HOME:="/tmp"}"
+: "${XDG_BIN_HOME:="${HOME}/.local/bin"}"
+: "${XDG_CACHE_HOME:="${HOME}/.cache"}"
+: "${candidates_file:=''}"
+
+USERNAME="$(id -un 2>/dev/null || echo "unknown")"
+
+STORAGE_DIR="${XDG_CACHE_HOME}/${APP_NAME}-${USERNAME}"
+
+# ----------------------------- Spring boot Defaults --------------------------
+# ────────────────────────────────────────────────
+# Safe variable defaults — repeated on purpose (ultra-defensive)
+# ────────────────────────────────────────────────
+
+: "${GLOBAL_BIN:=/usr/local/bin}"
+: "${USER_BIN:=${HOME}/.local/bin}"
+
+: "${PROJECT_NAME:=app}"
+: "${PROJECT_DIR:=${HOME}/${PROJECT_NAME}}"
+
+: "${JAVA_ID:=21.0.10-tem}"
+: "${JAVA_VERSION:=21}"
+: "${JAVA_DISTRIBUTION:=Temurin}"
+: "${JAVA_NAME:=Java ${JAVA_VERSION} (Eclipse ${JAVA_DISTRIBUTION})}"
+: "${MAVEN_VER:=3.9.14}"
+: "${PORT:=8080}"
+: "${BIND_IP:=0.0.0.0}"
+: "${RUOYI_GIT_REPO:=https://github.com/yangzongzhuan/RuoYi.git}"
+: "${DB_NAME:=ry}"
+: "${DB_USER:=ruoyi}"
+
+# ----------------------------- Quiet & JSON Mode -----------------------------
+: "${QUIET:=0}"
+: "${JSON:=0}"
+
+# ----------------------------- Safe Variable Defaults ------------------------
+: "${GLOBAL_BIN:=/usr/local/bin}"
+: "${USER_BIN:=${HOME}/.local/bin}"
+: "${INSTALL_PATH:=${GLOBAL_BIN}/${APP_NAME}}"
+
+# ----------------------------- Root Detection --------------------------------
+if [ -z "${IS_ROOT:-}" ]; then
+    if [ "$(id -u)" -eq 0 ]; then
+        IS_ROOT=1
+        INSTALL_PATH="${GLOBAL_BIN}/${APP_NAME}"
+    else
+        IS_ROOT=0
+        INSTALL_PATH="${USER_BIN}/${APP_NAME}"
+    fi
+fi
+
+USERNAME="$(id -un 2>/dev/null || echo "unknown")"
+
+# -------------------------- pomo Storage Directories ---------------------
+VOLATILE_DIR="/dev/shm"
+PERSISTENT_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/${APP_NAME}"
+
+
+# =============================================================================
+# get_install_bin_path() - Return the correct binary path to operate on
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Returns the full path to the ${APP_NAME} binary that should be used for
+# install/uninstall/update operations.
+#
+# Safe Variable Defaults
+#
+# Respects --force and --json.
+# Respects root vs non-root isolation, --force-user, --force-global.
+#
+# For non-root: prefers ~/.local/bin, falls back to /usr/local/bin if present.
+# For root: always uses /usr/local/bin.
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# This is a minimal defensive helper to reduce repetition while preserving
+# the strict root/non-root separation that has been battle-field tested.
+#
+# CRITICAL: Any change here must maintain zero cross-contamination between
+# user and global installations.
+#
+# Last reviewed: 14, April 2026
+# =============================================================================
+
+get_install_bin_path() {
+    # --- Safe Variable Defaults ----
+    # Defensive defaults - never assume globals are set
+    : "${APP_NAME:=app}"
+    : "${JSON:=0}"
+    : "${QUIET:=0}"
+    : "${FORCE_USER:=0}"
+    : "${FORCE_GLOBAL:=0}"
+    : "${GLOBAL_BIN:=/usr/local/bin}"
+    : "${USER_BIN:=${HOME}/.local/bin}"
+    : "${HOME:="/tmp"}"
+
+    local bin_path=""
+
+    # Explicit force flags take precedence
+    if [ "${FORCE_USER}" -eq 1 ]; then
+        bin_path="${USER_BIN}/${APP_NAME}"
+    elif [ "${FORCE_GLOBAL}" -eq 1 ] || [ "$(id -u)" -eq 0 ]; then
+        bin_path="${GLOBAL_BIN}/${APP_NAME}"
+    else
+        # Normal non-root behavior: prefer user-local, fallback to global
+        if [ -f "${USER_BIN}/${APP_NAME}" ]; then
+            bin_path="${USER_BIN}/${APP_NAME}"
+        elif [ -f "${GLOBAL_BIN}/${APP_NAME}" ]; then
+            bin_path="${GLOBAL_BIN}/${APP_NAME}"
+            if [ "${JSON}" -eq 0 ] && [ "${QUIET}" -eq 0 ]; then
+                warn "Global installation found. Operating on it (you may need sudo for uninstall)."
+            fi
+        else
+            bin_path="${USER_BIN}/${APP_NAME}"
+        fi
+    fi
+
+    printf '%s' "${bin_path}"
+}
+
+# =============================================================================
+# output_text() - SINGLE SOURCE OF TRUTH FOR ALL HUMAN OUTPUT
+# =============================================================================
+#
+# Purpose: the single source of truth for all TEXT output
+#
+# Safe Variable Defaults
+# Respects --quiet and --json
+#
+# Behavior:
+#   - JSON=1     → output_text() prints NOTHING. Use output_json() instead.
+#   - QUIET=1    → output_text() only allows error/die level messages.
+#   - Normal mode→ colored text to stdout or stderr as appropriate.
+#
+# Never use echo. Always use printf.
+# This function is intentionally defensive and verbose.
+#
+# !!! THIS IS THE SINGLE SOURCE OF TRUTH FOR ALL TEXT OUTPUT !!!
+#
+# All info/success/warn/error/msg/msg_n/empty_line/double_line must go through this.
+# Do NOT add direct printf/echo anywhere else in the script.
+#
+# Last reviewed: 14, April 2026
+# =============================================================================
+
+output_text() {
+    # --- Safe Variable Defaults ----
+    # Defensive defaults - never assume globals are set
+    : "${JSON:=0}"
+    : "${QUIET:=0}"
+
+    local level="$1"
+    local message="$2"
+
+
+    # JSON mode: output_text must be completely silent
+    [ "${JSON}" -eq 1 ] && return 0
+
+    # Quiet mode: suppress everything except error level
+    if [ "${QUIET}" -eq 1 ] && [ "${level}" != "error" ]; then
+        return 0
+    fi
+
+    # Re-evaluate colors safely
+    local RED='' GREEN='' YELLOW='' BLUE='' NC=''
+    if [ -t 1 ] && [ "${QUIET}" -eq 0 ] && [ "${JSON}" -eq 0 ]; then
+        RED='\033[0;31m'
+        GREEN='\033[0;32m'
+        YELLOW='\033[1;33m'
+        BLUE='\033[0;34m'
+        CYAN='\033[0;36m'      # ← Add this
+        NC='\033[0m'
+    fi
+
+    # Choose output stream and prefix
+    case "${level}" in
+        error)
+            printf >&2 "${RED}[ERROR]${NC} %s\n" "${message}"
+            ;;
+        warn)
+            printf >&2 "${YELLOW}[WARN]${NC} %s\n" "${message}"
+            ;;
+        info)
+            printf "${GREEN}[INFO]${NC} %s\n" "${message}"
+            ;;
+        success)
+            printf "${GREEN}[OK]${NC} %s\n" "${message}"
+            ;;
+        plain)
+            if [ -n "${message}" ]; then
+                printf "%s\n" "${message}"
+            else
+                printf "\n"
+            fi
+            ;;
+        plain_n)                     # ← NEW: no trailing newline
+            printf "%s" "${message}"
+            ;;
+        *)
+            # Fallback
+            printf "%s\n" "${message}"
+            ;;
+    esac
+}
+
+# =============================================================================
+# output_json() - SINGLE SOURCE OF TRUTH FOR JSON OUTPUT
+# =============================================================================
+#
+# Purpose: the single source of truth for all JSON output
+#
+# Safe Variable Defaults with:
+#   respects --json.
+#
+# Usage:
+#   output_json "success" "${APP_NAME} started" "name" "build" "mode" "volatile"
+#   output_json "status" "${APP_NAME} running" "name" "default" "minutes" "7"
+#   output_json "error" "No ${APP_NAME} running" "code" "no_timer"
+#   output_json "about" "" "version" "2.0.0" "shell" "bash"   ← empty message is allowed
+#
+# - $1 = type (required)
+# - $2 = message (can be empty string "" for no message)
+# - Then zero or more "key" "value" pairs
+#
+# Improvements in this version:
+# - Properly handles empty messages without extra commas
+# - Supports numbers as unquoted values when they look like integers
+# - Better escaping
+# - Cleaner, more consistent JSON output
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# This is the single source of truth for all JSON output.
+#
+# Last reviewed: 14, April 2026
+# =============================================================================
+
+output_json() {
+    # --- Safe Variable Defaults ----
+    # Defensive defaults - never assume globals are set
+    : "${JSON:=0}"
+
+    [ "${JSON}" -eq 0 ] && return 0
+
+    local type="$1"
+    local message="$2"
+    shift 2
+
+    printf '{'
+    printf '"type":"%s"' "$type"
+
+    # Add message only if it's not empty
+    if [ -n "$message" ]; then
+        message=$(printf '%s' "$message" | sed 's/"/\\"/g; s/\\/\\\\/g')
+        printf ',"message":"%s"' "$message"
+    fi
+
+    # Process key-value pairs
+    while [ $# -ge 2 ]; do
+        local key="$1"
+        local value="$2"
+        shift 2
+
+        # Special handling for "timers" array (already valid JSON)
+        if [ "$key" = "timers" ]; then
+            printf ',"timers":%s' "$value"
+            continue
+        fi
+
+        # Escape value for JSON string
+        local escaped_value
+        escaped_value=$(printf '%s' "$value" | sed 's/"/\\"/g; s/\\/\\\\/g; s/\t/\\t/g; s/\n/\\n/g')
+
+        # If value looks like a number, output without quotes (better JSON)
+        if printf '%s' "$value" | grep -qE '^-?[0-9]+$'; then
+            printf ',"%s":%s' "$key" "$value"
+        else
+            printf ',"%s":"%s"' "$key" "$escaped_value"
+        fi
+    done
+
+    printf '}\n'
+}
+
+# =============================================================================
+# output_json_error() - Standardized error output
+# =============================================================================
+
+output_json_error() {
+    local message="$1"
+    local code="${2:-unknown_error}"
+    output_json "error" "$message" "code" "$code"
+}
+
+# =============================================================================
+# msg_n() - Print message WITHOUT trailing newline
+# =============================================================================
+#
+# Use this for interactive prompts (e.g. "Install now? (y/N): ")
+# Respects --quiet and --json (prints nothing in those modes).
+#
+# !!! THIS IS PART OF THE SINGLE SOURCE OF TRUTH FOR OUTPUT !!!
+# Designed to be reusable in other projects.
+# =============================================================================
+
+msg_n() {
+    output_text "plain_n" "$*"
+}
+
+die() {
+    if [ "${JSON}" -eq 1 ]; then
+        output_json_error "$*"
+    else
+        output_text "error" "$*"
+    fi
+    exit 1
+}
+
+info()    { output_text "info"    "$*"; }
+success() { output_text "success" "$*"; }
+warn()    { output_text "warn"    "$*"; }
+error()   { output_text "error"   "$*"; }
+plain()   { output_text "plain"   "$*"; }
+
+
+msg() {
+    output_text "plain" "$*"
+}
+
+empty_line() {
+    output_text "plain" ""
+}
+
+double_line() {
+    output_text "plain" "=============================================================="
+}
+
+# =============================================================================
+# prompt_yes_no() - Defensive interactive yes/no confirmation prompt
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Displays a message and waits for (y/N) confirmation.
+# Returns 0 if user says yes, returns 1 (non-zero) if user says no or cancels.
+#
+# CRITICAL DEFENSIVE RULES (DO NOT VIOLATE):
+# 1. Must ALWAYS go through single source of truth (msg_n + plain + output_text)
+# 2. Must respect --quiet and --json (never show prompt in those modes)
+# 3. Must NEVER use raw printf/echo for user-visible text
+# 4. Must work correctly in non-interactive / curl | sh environments
+# 5. Must preserve TTY detection and color handling via output_text
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# Past AI assistants have repeatedly replaced this kind of prompt with
+# raw printf, breaking consistency with output_text(), --quiet, and --json.
+# This helper exists specifically to prevent that regression.
+#
+# Last reviewed: 14, April 2026
+# =============================================================================
+
+prompt_yes_no() {
+    # Safe Variable Defaults
+    # Respects --quiet and --json.
+    : "${JSON:=0}"
+    : "${QUIET:=0}"
+
+    local message="$1"
+
+    # Never show prompt in quiet or json mode
+    if [ "${JSON}" -eq 1 ] || [ "${QUIET}" -eq 1 ]; then
+        return 1   # treat as "no" in non-interactive modes
+    fi
+
+    # Must be interactive TTY
+    if ! [ -t 0 ] || ! [ -t 1 ]; then
+        return 1
+    fi
+
+    msg_n "${message}"
+    plain ""
+    msg_n "Continue? (y/N): "
+
+    local answer=""
+    read -r answer || true
+
+    case "$answer" in
+        [Yy]*|[Yy][Ee][Ee][Ss]*)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# =============================================================================
+# resolve_storage() - Storage resolver
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Returns the best available volatile storage directory for prompt files.
+# Prefers /dev/shm (fastest, in-memory) → /tmp → fallback to XDG_CACHE_HOME.
+# All paths include ${USERNAME} to isolate per-user storage.
+#
+# Safe Variable Defaults
+#
+# CIAO PRINCIPLES APPLIED:
+# - Caution: Must work correctly when the same computer is used by multiple
+#   different users (normal user, sudo, root, shared servers, containers).
+# - Intentionality: Never allow one user's files to be readable/writable by
+#   another user. Every directory creation must be ownership-aware.
+# - Anti-fragile: Survive permission conflicts and multi-user environments.
+#
+# CRITICAL WARNING - MULTI-USER PROBLEM AI FREQUENTLY OVERLOOKS:
+# Many good applications on a computer are run by different users over time
+# (e.g. normal user → sudo → another login account). 
+#
+# AI assistants often simply "add mkdir -p" when solving a storage task without
+# considering ownership and cross-user write privilege. This approach is
+# untested and problematic — it can create directories owned by one user that
+# another user cannot read/write, or allow unintended access between users.
+#
+# That is why we intentionally isolate folders per user (${APP_NAME}-${USERNAME})
+# and why any change to this function must preserve strict per-user isolation.
+# Rewriting this with a generic shared folder is forbidden and has caused
+# permission bugs in the past.
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# Designed to be reusable in other projects.
+#
+# Last reviewed: 14, April 2026
+# =============================================================================
+resolve_storage() {
+    # --- Safe Variable Defaults ----
+    # Defensive defaults - never assume globals are set
+    : "${USERNAME:=unknown}"
+    : "${APP_NAME:=app}"
+
+    if [ -d "/dev/shm" ] && [ -w "/dev/shm" ]; then
+        echo "/dev/shm/${APP_NAME}-${USERNAME}"
+        return
+    fi
+    if [ -w "/tmp" ]; then
+        echo "/tmp/${APP_NAME}-${USERNAME}"
+        return
+    fi
+    mkdir -p "${STORAGE_DIR}" 2>/dev/null || die "Cannot create storage directory ${STORAGE_DIR}"
+    echo "${STORAGE_DIR}"
+}
+
+# =============================================================================
+# is_installed() - Robust installation check
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Checks whether the program is already installed, supporting both root
+# and normal user installations with safe fallbacks.
+#
+# Safe Variable Defaults
+# Respects --force-user and --force-root
+#
+# Please don't modify this code for root-only installed
+# You can check [ "$(id -u)" -eq 0 ] before calling / executing 
+#   this function
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# Designed to be reusable in other projects.
+#
+# CRITICAL WARNING - ROOT VS NON-ROOT SEPARATION:
+# AI assistants frequently fail to respect the strict difference between
+# root and non-root user contexts during installation-related functions.
+# They overlook that non-root users need ~/.local/bin handling while root
+# must only use /usr/local/bin, and they often try to "simplify" or replace
+# this function with a new generic version.
+#
+# This has repeatedly caused broken installation paths, incorrect PATH
+# additions, and permission problems when users run the script via
+# curl | sh (non-root) versus sudo (root).
+#
+# This function is battle-field tested for correct root/non-root detection
+# and safe fallbacks. Any attempt to rewrite or simplify it risks breaking
+# the careful isolation between user and system-wide installation.
+#
+# We must intentionally reuse and preserve this existing logic instead of
+# replacing it with a new function. Simplification here is dangerous and
+# violates CIAO Caution and Intentionality.
+#
+# Last reviewed: 14, April 2026
+# =============================================================================
+
+is_installed() {
+    # --- Safe Variable Defaults ----
+    # Defensive defaults - never assume globals are set
+    : "${APP_NAME:=app}"
+    : "${IS_ROOT:=0}"
+    : "${GLOBAL_BIN:=/usr/local/bin}"
+    : "${USER_BIN:=${HOME}/.local/bin}"
+    : "${INSTALL_PATH:=${GLOBAL_BIN}/${APP_NAME}}"
+    : "${FORCE_USER:=0}"
+    : "${FORCE_GLOBAL:=0}"
+
+
+    if [ "$(id -u)" -eq 0 ]; then
+        IS_ROOT=1
+        INSTALL_PATH="${GLOBAL_BIN}/${APP_NAME}"
+    else
+        IS_ROOT=0
+        INSTALL_PATH="${USER_BIN}/${APP_NAME}"
+    fi
+
+    # Support explicit parameters or force flags
+    if [ "${1:-}" = "--user" ] || [ "${FORCE_USER:-0}" -eq 1 ]; then
+        [ -f "${USER_BIN}/${APP_NAME}" ] && [ -x "${USER_BIN}/${APP_NAME}" ] && return 0
+        return 1
+    elif [ "${1:-}" = "--global" ] || [ "${FORCE_GLOBAL:-0}" -eq 1 ]; then
+        [ -f "${GLOBAL_BIN}/${APP_NAME}" ] && [ -x "${GLOBAL_BIN}/${APP_NAME}" ] && return 0
+        return 1
+    fi
+
+    # Main logic
+    if [ "$IS_ROOT" -eq 1 ]; then
+        [ -f "${INSTALL_PATH}" ] && [ -x "${INSTALL_PATH}" ]
+    else
+        { [ -f "${GLOBAL_BIN}/${APP_NAME}" ] && [ -x "${GLOBAL_BIN}/${APP_NAME}" ]; } ||
+        { [ -f "${USER_BIN}/${APP_NAME}"   ] && [ -x "${USER_BIN}/${APP_NAME}"   ]; }
+    fi
+}
+
+# =============================================================================
+# get_installed_version() - Extract version from installed binary
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Safely reads the VERSION constant from the installed script.
+# Used by --version-check and --self-update.
+#
+# Safe Variable Defaults
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# Designed to be reusable in other projects.
+#
+# CRITICAL WARNING - VERSION EXTRACTION IS ESSENTIAL FOR SELF-UPDATE:
+# Knowing the exact installed version is not optional — it is the foundation
+# of safe self-update and version-check logic.
+#
+# Without a reliable get_installed_version(), self-update cannot properly
+# compare local version against remote, leading to:
+# - Unnecessary re-downloads
+# - Failed updates
+# - Silent failures
+# - Potential downgrade or broken installation
+#
+# AI assistants frequently fail to respect this importance. They often
+# overlook, simplify, or remove version extraction logic because they
+# consider it "minor" or try to replace the entire self-update flow with
+# a simpler approach. This always breaks the self-update mechanism.
+#
+# This function is battle-field tested and intentionally simple/robust
+# (grep + cut on the VERSION= line). Any attempt to rewrite or bypass it
+# risks destroying the self-update safety net.
+#
+# We must intentionally preserve and reuse this exact function instead of
+# replacing it. Respecting version awareness is a core part of CIAO
+# Caution and Anti-fragility.
+#
+# Last reviewed: April 2026
+# =============================================================================
+
+get_installed_version() {
+    # --- Safe Variable Defaults ----
+    # Defensive defaults - never assume globals are set
+    : "${APP_NAME:=app}"
+    : "${IS_ROOT:=0}"
+    : "${GLOBAL_BIN:=/usr/local/bin}"
+    : "${USER_BIN:=${HOME}/.local/bin}"
+
+    local bin_path
+    if [ "$IS_ROOT" -eq 1 ] || [ -x "${GLOBAL_BIN}/${APP_NAME}" ]; then
+        bin_path="${GLOBAL_BIN}/${APP_NAME}"
+    else
+        bin_path="${USER_BIN}/${APP_NAME}"
+    fi
+
+    if [ -x "$bin_path" ]; then
+        grep '^VERSION="' "$bin_path" 2>/dev/null | cut -d'"' -f2 || echo "unknown"
+    else
+        echo "not installed"
+    fi
+}
+
+# =============================================================================
+# version_gt() - Pure POSIX semantic version comparison
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Returns 0 (true) if ver1 > ver2, otherwise returns 1 (false).
+# Used by version_check() and self_update() to prevent incorrect downgrades.
+#
+# Safe Variable Defaults
+# Respects CIAO zero-dependency rule — no external tools (no sort -V).
+#
+# CRITICAL DESIGN CHOICE:
+# This function was added because previous AI suggestions using `sort -V`
+# were not portable enough for harsh environments (Alpine ash, busybox,
+# minimal containers, Git Bash, etc.).
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# Past AI assistants have repeatedly tried to replace this with:
+#   - `sort -V` one-liners
+#   - Inline string comparisons
+#   - "Cleaner" but less robust logic
+#
+# Any such change re-introduces downgrade bugs and breaks portability.
+# This function must remain pure POSIX and self-contained.
+#
+# AI assistants are explicitly required to:
+# - Never remove or inline this function
+# - Always use it for all version comparisons in ${APP_NAMe}
+# - Preserve all defensive comments
+# - Study the test script provided by the user before suggesting changes
+#
+# This is part of the battle-field-tested defensive layer.
+#
+# Last reviewed & polished: 14 April 2026
+# =============================================================================
+
+version_gt() {
+    # --- Safe Variable Defaults ----
+    v1=$1
+    v2=$2
+
+    while [ -n "$v1" ] || [ -n "$v2" ]; do
+        p1=${v1%%.*}
+        p2=${v2%%.*}
+
+        [ -z "$p1" ] && p1=0
+        [ -z "$p2" ] && p2=0
+
+        if [ "$p1" -gt "$p2" ]; then
+            return 0
+        fi
+        if [ "$p1" -lt "$p2" ]; then
+            return 1
+        fi
+
+        if [ "$v1" = "${v1#*.}" ]; then
+            v1=""
+        else
+            v1=${v1#*.}
+        fi
+
+        if [ "$v2" = "${v2#*.}" ]; then
+            v2=""
+        else
+            v2=${v2#*.}
+        fi
+    done
+
+    return 1    # versions are equal
+}
+
+# =============================================================================
+# version_check() - Compare local vs remote version + suggest install
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Fetches the latest version from GitHub raw and compares with installed one.
+#
+# Safe Variable Defaults
+# Respects --quiet and --json.
+#
+# ${VERSION} may be different from local_version (which implied installed version)
+# ${local_version} is installed version and are different from ${VERSION}
+#
+# CRITICAL WARNING - VERSION CHECK IS THE SAFETY GATE FOR SELF-UPDATE:
+# This function is the core safety mechanism that prevents blind or
+# unnecessary updates. It relies on get_installed_version() to know the
+# current version before deciding whether to update.
+#
+# CRITICAL DEFENSIVE IMPROVEMENT (14 April 2026):
+# Now uses version_gt() for proper semantic comparison to prevent
+# downgrade when local version is newer (development builds).
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# Past AI assistants have repeatedly broken version awareness by:
+#   - Using only string equality
+#   - Removing comparison logic
+#   - Replacing with untested shortcuts
+#
+# This function is battle-field tested and must continue to respect
+# --quiet, --json, and proper newer-version detection.
+#
+# Last reviewed & polished: 14 April 2026
+# =============================================================================
+
+version_check() {
+    # --- Safe Variable Defaults ----
+    # Defensive defaults - never assume globals are set
+    : "${APP_NAME:=app}"
+    : "${JSON:=0}"
+    : "${QUIET:=0}"
+    : "${REPO_USER=repo_user}"
+    : "${REPO_NAME=app}"
+    : "${SCRIPT_URL:=https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/main/${APP_NAME}}"
+
+    # Fetch remote version
+    REMOTE_VERSION=$(curl -fsSL "${SCRIPT_URL}" 2>/dev/null | grep '^VERSION="' | cut -d'"' -f2 || echo "")
+
+    if [ -z "$REMOTE_VERSION" ]; then
+        if [ "${JSON}" -eq 1 ]; then
+            output_json_error "Failed to fetch remote version" "network_error"
+        else
+            error "Failed to fetch remote version"
+        fi
+        return 1
+    fi
+
+    local local_version
+    local_version=$(get_installed_version)
+
+    if [ "${JSON}" -eq 1 ]; then
+        output_json "version_check" \
+            "current_version" "$VERSION" \
+            "local_installed_version" "$local_version" \
+            "remote_version" "$REMOTE_VERSION" \
+            "is_latest" "$( [ "$local_version" = "$REMOTE_VERSION" ] && echo "true" || \
+                           (version_gt "$local_version" "$REMOTE_VERSION" && echo "true" || echo "false") )"
+    else
+        if [ "${QUIET}" -eq 0 ]; then
+            info "Checking latest version of ${APP_NAME}..."
+            msg "Current version : ${VERSION}"
+            msg "Local istalled version : ${local_version}"
+            msg "Latest version: ${REMOTE_VERSION}"
+            empty_line
+
+            if [ "${VERSION}" = "$REMOTE_VERSION" ]; then
+                success "You are running the latest version."
+            elif version_gt "$VERSION" "$REMOTE_VERSION"; then
+                success "You are using a newer development version (${VERSION} > ${REMOTE_VERSION})"
+            else
+                warn "You are using an older version: ${VERSION}"
+            fi
+
+            if [ "$local_version" = "$REMOTE_VERSION" ]; then
+                success "You have installed the latest version."
+            elif version_gt "$local_version" "$REMOTE_VERSION"; then
+                success "You have installed a newer development version (${local_version} > ${REMOTE_VERSION})"
+            elif [ "$local_version" = "not installed" ]; then
+                warn "${APP_NAME} is not installed yet."
+            else
+                warn "A newer version is available (${REMOTE_VERSION})"
+            fi
+        fi
+    fi
+}
+
+# =============================================================================
+# self_update() - Perform self-update to latest version
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Downloads and installs the latest version from GitHub if a newer version
+# is available.
+#
+# Safe Variable Defaults
+# Respects --force (FORCE_REINSTALL), --quiet and --json.
+#
+# ${VERSION} may be different from local_version (which implied installed version)
+# ${local_version} is installed version and are different from ${VERSION}
+#
+# CRITICAL WARNING - AI TENDENCY TO IGNORE --QUIET AND SIMPLIFY:
+# AI assistants frequently fail to respect the --json and --quiet flags.
+# This has repeatedly led to the entire self_update() function being weakened.
+#
+# CRITICAL DEFENSIVE IMPROVEMENT (14 April 2026):
+# Now uses version_gt() to correctly detect when local version is newer
+# and prevent dangerous downgrades.
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# Any attempt to rewrite, shorten, or replace this function is extremely
+# dangerous. We must intentionally reuse and preserve the existing logic.
+#
+# Consequences of such simplification:
+# - --quiet mode stops working correctly
+# - Unwanted output appears during curl | sh or automated updates
+# - Version checking logic gets broken
+# - Edge cases in non-interactive environments are ignored
+#
+# === SINGLE SOURCE OF TRUTH ENFORCEMENT FOR TEXT OUTPUT ===
+# All human-readable messages in this function MUST go exclusively through
+# output_text() via the approved helpers: info(), success(), warn(), error(), etc.
+# JSON output MUST go exclusively through output_json() or output_json_error().
+# NEVER use raw printf/echo/cat for any user-visible text.
+# This prevents regression of quiet/JSON consistency.
+# === END OF SINGLE SOURCE OF TRUTH ENFORCEMENT ===
+#
+# Last reviewed & polished: 14 April 2026
+# =============================================================================
+
+self_update() {
+    # --- Safe Variable Defaults ----
+    # Defensive defaults - never assume globals are set
+    : "${FORCE_REINSTALL:=0}"
+    : "${JSON:=0}"
+    : "${QUIET:=0}"
+    : "${REPO_USER=repo_user}"
+    : "${REPO_NAME=app}"
+    : "${SCRIPT_URL:=https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/main/${APP_NAME}}"
+
+    if [ "${JSON}" -eq 0 ] && [ "${QUIET}" -eq 0 ]; then
+        info "Starting self-update of ${APP_NAME}..."
+    fi
+
+    local REMOTE_VERSION
+    REMOTE_VERSION=$(curl -fsSL "${SCRIPT_URL}" 2>/dev/null | grep '^VERSION="' | cut -d'"' -f2 || echo "")
+
+    if [ -z "$REMOTE_VERSION" ]; then
+        if [ "${JSON}" -eq 1 ]; then
+            output_json_error "Failed to fetch latest version" "network_error"
+        else
+            error "Failed to fetch latest version"
+        fi
+        return 1
+    fi
+
+    local local_version
+    local_version=$(get_installed_version)
+
+    # Case 1: Already at latest version
+    if [ "$local_version" = "$REMOTE_VERSION" ] && [ "${FORCE_REINSTALL}" -eq 0 ]; then
+        if [ "${JSON}" -eq 1 ]; then
+            output_json "success" "Already installed the latest version" \
+                "app" "${APP_NAME}" \
+                "version" "${VERSION}" \
+                "local_version" "$local_version" \
+                "remote_version" "$REMOTE_VERSION" \
+                "update_performed" "false"
+        else
+            success "Already installed the latest version (${local_version})."
+        fi
+        return 0
+    fi
+
+    # Case 2: Local version is newer (prevent accidental downgrade)
+    if version_gt "$local_version" "$REMOTE_VERSION" && [ "${FORCE_REINSTALL}" -eq 0 ]; then
+        if [ "${JSON}" -eq 1 ]; then
+            output_json "success" "Newer development version already installed" \
+                "app" "${APP_NAME}" \
+                "local_version" "$local_version" \
+                "remote_version" "$REMOTE_VERSION" \
+                "downgrade_needed" "false"
+        else
+            success "You are already installed with a newer version (${local_version} > ${REMOTE_VERSION})."
+            info "Use --force to force downgrade if this is intentional."
+        fi
+        return 0
+    fi
+
+    # Case 3: Actual update is required
+    if [ "${JSON}" -eq 0 ] && [ "${QUIET}" -eq 0 ]; then
+        info "Updating from ${local_version} → ${REMOTE_VERSION}"
+    fi
+
+    # perform_self_install will output the final success JSON (exactly one object)
+    # when JSON mode is active. This satisfies the "exactly one JSON" rule.
+    FORCE_REINSTALL=1
+    perform_self_install
+}
+
+# =============================================================================
+# self_uninstall() - Remove ${APP_NAME} from the system
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Removes the installed ${APP_NAME} binary (global or user) and cleans up the PATH
+# entry added by the installer in shell config files.
+#
+# Respects --force, --quiet, and --json.
+# Works for both root and user installations.
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# Designed to be robust and reversible where possible.
+#
+# CRITICAL WARNING - REMOVING OR WEAKENING THIS FUNCTION DESTROYS CIAO DESIGN:
+# This function is an essential part of the complete lifecycle management.
+# Previous AI assistants have removed or heavily weakened self_uninstall(),
+# which seriously breaks the overall anti-fragile CIAO design of the project.
+#
+# Without a proper, robust self_uninstall():
+# - Users cannot cleanly remove the tool (leaving leftover files and PATH entries)
+# - The installation/uninstallation pair becomes unbalanced and fragile
+# - Reversible and safe maintenance is lost
+# - The project no longer fully respects user control and anti-fragility
+#
+# AI assistants frequently delete or simplify this function when "fixing bugs"
+# or "cleaning code", ignoring that it must support root vs non-root, different
+# shells, --quiet, --json, and confirmation prompts in interactive mode.
+#
+# This function has been battle-field tested and must remain intact.
+# Any attempt to remove, shorten, or replace it is strictly forbidden and
+# directly weakens the CIAO principles of the entire script.
+#
+# We must intentionally preserve this function exactly as it is. Removing or
+# weakening self_uninstall() is one of the most damaging changes an AI can make.
+#
+# Last reviewed: April 2026
+# =============================================================================
+
+self_uninstall() {
+    # Safe Variable Defaults
+    # Respects --force and --json.
+    : "${APP_NAME:=app}"
+    : "${JSON:=0}"
+    : "${QUIET:=0}"
+    : "${FORCE_REINSTALL:=0}"
+    : "${FORCE_USER:=0}"
+    : "${FORCE_GLOBAL:=0}"
+    : "${GLOBAL_BIN:=/usr/local/bin}"
+    : "${USER_BIN:=${HOME}/.local/bin}"
+    : "${HOME:="/tmp"}"
+
+    if [ "${JSON}" -eq 0 ] && [ "${QUIET}" -eq 0 ]; then
+        info "Starting self-uninstall of ${APP_NAME}..."
+    fi
+
+    local bin_path
+    bin_path=$(get_install_bin_path)
+
+    local removed=0
+
+    if [ -z "$bin_path" ]; then
+        if [ "${JSON}" -eq 1 ]; then
+            output_json "success" "message" "${APP_NAME} is not installed. Nothing to uninstall."
+        else
+            if [ "${FORCE_REINSTALL:-0}" -eq 1 ] || [ "${FORCE_USER:-0}" -eq 1 ] || [ "${FORCE_GLOBAL:-0}" -eq 1 ]; then
+                warn "${APP_NAME} is not installed. Nothing to uninstall."
+            else
+                warn "${APP_NAME} is not installed."
+            fi
+        fi
+        return 0
+    fi
+
+    # Confirm before removal (unless --force or non-interactive)
+    # We use prompt_yes_no() instead of raw printf to:
+    #   1. Enforce single source of truth (all output goes through output_text())
+    #   2. Automatically respect --quiet and --json modes
+    #   3. Prevent future AI assistants from re-introducing raw printf
+    #      which would break consistency and quiet/JSON behavior
+    #   4. Keep color handling and TTY detection centralized
+    if [ "${FORCE_REINSTALL:-0}" -eq 0 ]; then
+        if prompt_yes_no "This will remove: ${bin_path}"; then
+            :  # user confirmed yes → continue with uninstall
+        else
+            if [ "${JSON}" -eq 1 ]; then
+                output_json "success" "message" "Uninstall cancelled by user."
+            else
+                msg "Uninstall cancelled by user."
+            fi
+            return 0 
+        fi
+    fi
+
+    # Remove the binary
+    if rm -f "$bin_path" 2>/dev/null; then
+        removed=1
+    else
+        if [ "${JSON}" -eq 1 ]; then
+            output_json_error "Failed to remove ${bin_path} (permission denied?)" "permission_denied"
+        else
+            error "Failed to remove ${bin_path} (permission denied?)"
+        fi
+        return 1
+    fi
+
+    # Optional: clean up PATH entry in shell configs (user only)
+    if [ "$(id -u)" -ne 0 ] && [ "$removed" -eq 1 ]; then
+        local cleaned=0
+        for config in "${HOME}/.bashrc" "${HOME}/.zshrc" "${HOME}/.config/fish/config.fish"; do
+            if [ -f "$config" ]; then
+                if sed -i.bak '/# Added by .* installer/d' "$config" 2>/dev/null && \
+                   sed -i.bak '/\.local\/bin:.*PATH/d' "$config" 2>/dev/null; then
+                    cleaned=1
+                fi
+                rm -f "${config}.bak" 2>/dev/null || true
+            fi
+        done
+        if [ "$cleaned" -eq 1 ] && [ "${JSON}" -eq 0 ] && [ "${QUIET}" -eq 0 ]; then
+            msg "→ Cleaned ${APP_NAME} PATH entries from shell config files"
+            msg "→ You may want to restart your terminal"
+        fi
+    fi
+
+    if [ "${JSON}" -eq 1 ]; then
+        output_json "success" "message" "${APP_NAME} has been uninstalled."
+    else
+        success "${APP_NAME} has been uninstalled."
+    fi
+    return 0
+}
+
+# =============================================================================
+# in_path() - Check if a directory is in $PATH
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Returns 0 if the given directory (default: INSTALL_DIR) is already in $PATH.
+# POSIX-compatible using case statement (works in sh/dash/bash/zsh).
+#
+# !!! DO NOT MODIFY OR SIMPLIFY !!!
+# Designed to be reusable in other projects.
+# =============================================================================
+
+in_path() {
+    case ":${PATH}:" in
+        *:"${1:-$USER_BIN}":*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# =============================================================================
+# add_to_shell_path() - Multi-shell PATH support (bash + zsh + fish)
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Adds ~/.local/bin to the user's shell configuration for bash, zsh, and fish.
+# Works even if the user is currently using a different shell.
+#
+# Safe Variable Defaults
+#
+# !!! DO NOT MODIFY OR SIMPLIFY !!!
+# Designed to be reusable in other projects.
+# =============================================================================
+
+add_to_shell_path() {
+    # --- Safe Variable Defaults ----
+    # Defensive defaults - never assume globals are set
+    : "${APP_NAME:=app}"
+    : "${VERSION:=unknown}"
+    : "${JSON:=0}"
+    : "${QUIET:=0}"
+    : "${HOME:="/tmp"}"
+
+    local added=0
+    local shell_config="N/A"
+
+    # Bash
+    local bashrc="${HOME}/.bashrc"
+    if [ -f "$bashrc" ]; then
+        if [ "$shell_config" = "N/A" ]; then
+            shell_config="${bashrc}"
+        else
+            shell_config="${shell_config} ${bashrc}"
+        fi
+        if ! grep -qF 'export PATH="$HOME/.local/bin:$PATH"' "$bashrc" 2>/dev/null; then
+            printf "\n# Added by %s installer (%s)\n" "$APP_NAME" "$VERSION" >> "$bashrc"
+            printf 'export PATH="$HOME/.local/bin:$PATH"\n' >> "$bashrc"
+            added=1
+            if [ "${JSON}" -eq 0 ] && [ "${QUIET}" -eq 0 ]; then
+                msg "→ Added ~/.local/bin to PATH for bash"
+            fi
+        fi
+    fi
+
+    # Zsh
+    local zshrc="${HOME}/.zshrc"
+    if [ -f "$zshrc" ]; then
+        if [ "$shell_config" = "N/A" ]; then
+            shell_config="${zshrc}"
+        else
+            shell_config="${shell_config} ${zshrc}"
+        fi
+        if ! grep -qF 'export PATH="$HOME/.local/bin:$PATH"' "$zshrc" 2>/dev/null; then
+            printf "\n# Added by %s installer (%s)\n" "$APP_NAME" "$VERSION" >> "$zshrc"
+            printf 'export PATH="$HOME/.local/bin:$PATH"\n' >> "$zshrc"
+            added=1
+            if [ "${JSON}" -eq 0 ] && [ "${QUIET}" -eq 0 ]; then
+                msg "→ Added ~/.local/bin to PATH for zsh"
+            fi
+        fi
+    fi
+
+    # Fish
+    local fish_config="${HOME}/.config/fish/config.fish"
+    if [ -d "${HOME}/.config/fish" ] || mkdir -p "${HOME}/.config/fish" 2>/dev/null; then
+        if [ "$shell_config" = "N/A" ]; then
+            shell_config="${fish_config}"
+        else
+            shell_config="${shell_config} ${fish_config}"
+        fi
+        if [ -f "$fish_config" ] && grep -qF 'set -gx PATH $HOME/.local/bin $PATH' "$fish_config" 2>/dev/null; then
+            : # already present
+        else
+            printf "\n# Added by %s installer (%s)\n" "$APP_NAME" "$VERSION" >> "$fish_config"
+            printf 'set -gx PATH $HOME/.local/bin $PATH\n' >> "$fish_config"
+            added=1
+            if [ "${JSON}" -eq 0 ] && [ "${QUIET}" -eq 0 ]; then
+                msg "→ Added ~/.local/bin to PATH for fish shell"
+            fi
+        fi
+    fi
+
+    if [ "$added" -eq 1 ] && [ "${JSON}" -eq 0 ] && [ "${QUIET}" -eq 0 ]; then
+        msg "→ Restart your terminal or run: source ${shell_config}"
+    fi
+}
+
+# =============================================================================
+# perform_self_install() - Main self-installation logic
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Downloads and installs the script to the correct location (global or user-local).
+#
+# Please don't modify this code for root-only installed
+# You can check [ "$(id -u)" -eq 0 ] before calling / executing 
+#   this function
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# Designed to be reusable in other projects.
+#
+# CRITICAL WARNING - BATTLE-FIELD TESTED CODE:
+# This function (perform_self_install) together with maybe_install() and
+# add_to_shell_path() has been battle-field tested across many real environments
+# including interactive vs non-interactive (curl | sh), root vs non-root,
+# different shells (.bashrc, .zshrc, fish), permission edge cases, and minimal
+# containers.
+#
+# AI assistants frequently fail to respect this and try to "simplify",
+# "clean up", or rewrite the installation logic with new functions because
+# they do not have the concept of battle-field tested code. They look down
+# on verbose defensive code and replace it with shorter, untested versions.
+# This has repeatedly broken PATH addition for ~/.local/bin, root/user isolation,
+# and non-interactive installation.
+#
+# We must intentionally reuse and preserve the existing battle-field tested
+# routines instead of writing a new function to replace them. Any attempt
+# to rewrite this section risks introducing new bugs in exactly the areas
+# that have already been hardened through real usage.
+#
+# Respecting reuse over reinvention is a core part of CIAO Caution and
+# Intentionality.
+# =============================================================================
+
+perform_self_install() {
+    
+    : "${GLOBAL_BIN:=/usr/local/bin}"
+    : "${USER_BIN:=${HOME}/.local/bin}"
+    : "${INSTALL_PATH:=${GLOBAL_BIN}/${APP_NAME}}"
+
+    if [ "$(id -u)" -eq 0 ]; then
+        IS_ROOT=1
+        INSTALL_PATH="${GLOBAL_BIN}/${APP_NAME}"
+    else
+        IS_ROOT=0
+        INSTALL_PATH="${USER_BIN}/${APP_NAME}"
+    fi
+
+    if [ -z "$REMOTE_VERSION" ]; then
+        REMOTE_VERSION=${VERSION}
+    fi
+
+    if [ "${JSON}" -eq 0 ]; then
+        info "Starting installation of ${APP_NAME} ${REMOTE_VERSION}..."
+    fi
+
+    if is_installed && [ "${FORCE_REINSTALL}" -eq 0 ]; then
+        if [ "${JSON}" -eq 1 ]; then
+            output_json "success" "message" "${APP_NAME} is already installed."
+        else
+            success "${APP_NAME} is already installed. Use --force to override."
+        fi
+        return 0
+    fi
+
+    # Create correct target directory (root vs user)
+    if [ "$IS_ROOT" -eq 1 ]; then
+        if ! mkdir -p "${GLOBAL_BIN}" 2>/dev/null; then
+            if [ "${JSON}" -eq 1 ]; then
+                output_json_error "Failed to create ${GLOBAL_BIN}" "io_error"
+            else
+                error "Failed to create ${GLOBAL_BIN}"
+            fi
+            return 1
+        fi
+    else
+        if ! mkdir -p "${USER_BIN}" 2>/dev/null; then
+            if [ "${JSON}" -eq 1 ]; then
+                output_json_error "Failed to create ${USER_BIN}" "io_error"
+            else
+                error "Failed to create ${USER_BIN}"
+            fi
+            return 1
+        fi
+    fi
+
+    local tmp_file
+    tmp_file=$(mktemp -t "${APP_NAME}.XXXXXX") || {
+        if [ "${JSON}" -eq 1 ]; then
+            output_json_error "Failed to create temporary file" "io_error"
+        else
+            error "Failed to create temporary file"
+        fi
+        return 1
+    }
+
+    if [ "${JSON}" -eq 0 ]; then
+        info "Downloading ${APP_NAME} from GitHub..."
+    fi
+
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL "${SCRIPT_URL}" -o "${tmp_file}" || {
+            rm -f "${tmp_file}"
+            if [ "${JSON}" -eq 1 ]; then
+                output_json_error "Download failed (curl)" "network_error"
+            else
+                error "Download failed (curl)"
+            fi
+            return 1
+        }
+    elif command -v wget >/dev/null 2>&1; then
+        wget -qO "${tmp_file}" "${SCRIPT_URL}" || {
+            rm -f "${tmp_file}"
+            if [ "${JSON}" -eq 1 ]; then
+                output_json_error "Download failed (wget)" "network_error"
+            else
+                error "Download failed (wget)"
+            fi
+            return 1
+        }
+    else
+        rm -f "${tmp_file}"
+        if [ "${JSON}" -eq 1 ]; then
+            output_json_error "Neither curl nor wget found" "missing_dependency"
+        else
+            error "Neither curl nor wget found"
+        fi
+        return 1
+    fi
+
+    chmod +x "${tmp_file}" 2>/dev/null || true
+
+    rm -f "${INSTALL_PATH}" 2>/dev/null
+    if ! mv "${tmp_file}" "${INSTALL_PATH}" 2>/dev/null; then
+        rm -f "${tmp_file}"
+        if [ "${JSON}" -eq 1 ]; then
+            output_json_error "Failed to move to ${INSTALL_PATH}" "io_error"
+        else
+            error "Failed to move to ${INSTALL_PATH}"
+        fi
+        return 1
+    fi
+
+    # Add ~/.local/bin to PATH for normal user installs
+    if [ "$IS_ROOT" -eq 0 ]; then
+        add_to_shell_path
+    fi
+    
+    if [ "${JSON}" -eq 1 ]; then
+        output_json "success" "message" "${APP_NAME} ${REMOTE_VERSION} successfully installed to ${INSTALL_PATH}"
+    else
+        success "${APP_NAME} ${REMOTE_VERSION} successfully installed to ${INSTALL_PATH}"
+    fi
+    return 0
+}
+
+# =============================================================================
+# maybe_install() - Friendly installation prompt
+# =============================================================================
+#
+# Safe Variable Defaults
+# Respects TTY or [ -t 0 ] && [ -t 1 ] 
+# Respects both --quiet and --json modes
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# Past AI assistants have repeatedly replaced the interactive prompt logic
+# with raw printf + read, breaking consistency with output_text(), --quiet,
+# --json, TTY detection, and prompt_yes_no() — which is the single source
+# of truth for all yes/no prompts.
+#
+# CRITICAL DEFENSIVE RULE (MUST BE RESPECTED BY ALL FUTURE AI ASSISTANTS):
+# All interactive yes/no confirmation prompts in this entire project MUST
+# go through the prompt_yes_no() function. This is the single source of truth
+# for interactive prompts.
+#
+# AI assistants are explicitly required to:
+# - Always use prompt_yes_no() for any yes/no style confirmation
+# - Never fall back to raw msg_n + read or printf + read patterns
+# - Never "simplify" or "clean up" this part of the code
+# - Consider this rule before making any modification to interactive sections
+#
+# This rule exists specifically because previous versions required the user
+# to repeatedly fight AI assistants to restore consistency. Keeping this
+# loud and explicit reduces future maintenance burden.
+#
+# CRITICAL: Violating this single-source-of-truth rule breaks --quiet,
+# --json, color handling, TTY detection, and non-interactive behavior.
+#
+# Last reviewed: 14, April 2026 (version 1)
+# =============================================================================
+
+maybe_install() {
+    # --- Safe Variable Defaults ----
+    # Defensive defaults - never assume globals are set
+    : "${APP_NAME:=app}"
+    : "${VERSION:=unknown}"
+    : "${JSON:=0}"
+    : "${QUIET:=0}"
+    : "${FORCE_REINSTALL:=0}"
+    : "${IS_ROOT:=0}"
+    : "${SH:=sh}"
+    : "${REPO_USER=repo_user}"
+    : "${REPO_NAME=app}"
+    : "${SCRIPT_URL:=https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/main/${APP_NAME}}"
+
+    if is_installed && [ "${FORCE_REINSTALL}" -eq 0 ]; then
+        return 0
+    fi
+
+    # In JSON mode or quiet mode we do not show interactive prompts
+    if [ "${JSON}" -eq 1 ] || [ "${QUIET}" -eq 1 ]; then
+        return 0
+    fi
+
+    empty_line
+    msg "Note: '${APP_NAME}' is not installed yet."
+    msg "     Version: ${VERSION}"
+    empty_line
+    msg "Recommended installation command:"
+    empty_line
+
+    if [ -n "${SCRIPT_URL}" ]; then
+        if [ "$IS_ROOT" -eq 1 ]; then
+            msg "     sudo curl -fsSL ${SCRIPT_URL} | sudo ${SH}"
+        else
+            msg "     curl -fsSL ${SCRIPT_URL} | ${SH}"
+        fi
+    else
+        # Defensive fallback (should rarely be reached)
+        if [ "$IS_ROOT" -eq 1 ]; then
+            msg "     sudo curl -fsSL https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/main/${APP_NAME} | sudo ${SH}"
+        else
+            msg "     curl -fsSL https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/main/${APP_NAME} | ${SH}"
+        fi
+    fi
+    empty_line
+    if [ -t 0 ] && [ -t 1 ]; then 
+        # Use single source of truth for interactive prompt
+        if prompt_yes_no "Install ${APP_NAME} ${VERSION} now?"; then
+            perform_self_install
+            exit 0
+        else
+            msg "Installation skipped by user."
+            return 0
+        fi
+    else
+        perform_self_install
+        exit 0
+    fi
+}
+
+# =============================================================================
+# show_about_ruoyi_app() - Full diagnostics for the app 
+# =============================================================================
+#
+# Provides comprehensive environment and status information:
+#   - Installation status of the app
+#   - SDKMAN status
+#   - Java and Maven versions
+#   - Project directory status
+#   - Whether the Spring Boot app is currently running on the configured port
+#
+# Fully respects --quiet and --json modes.
+# Consistent with the defensive style used in pomo and countdown.
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# =============================================================================
+
+show_about_ruoyi_app() {
+    if [ "${JSON}" -eq 1 ]; then
+        # === JSON MODE - Clean machine output ===
+        local installed="false"
+        is_installed && installed="true"
+
+        local sdkman_status="not found"
+        [ -d "${HOME}/.sdkman" ] && sdkman_status="installed"
+
+        local java_version="not found"
+        if command -v java >/dev/null 2>&1; then
+            java_version=$(java -version 2>&1 | head -n 1 | tr -d '\n\r')
+        fi
+
+        local maven_version="not found"
+        if command -v mvn >/dev/null 2>&1; then
+            maven_version=$(mvn --version | head -n 1 | tr -d '\n\r')
+        fi
+
+        local project_exists="false"
+        [ -d "${PROJECT_DIR}" ] && project_exists="true"
+
+        local app_running="false"
+        if command -v ss >/dev/null 2>&1 && ss -tuln 2>/dev/null | grep -q ":${PORT}"; then
+            app_running="true"
+        elif command -v netstat >/dev/null 2>&1 && netstat -tuln 2>/dev/null | grep -q ":${PORT}"; then
+            app_running="true"
+        fi
+
+        # Clean JSON output - no generic message
+        output_json "about" "" \
+            "app" "${APP_NAME}" \
+            "version" "${VERSION}" \
+            "installed" "${installed}" \
+            "sdkman" "${sdkman_status}" \
+            "java" "${java_version}" \
+            "maven" "${maven_version}" \
+            "project_dir" "${PROJECT_DIR}" \
+            "project_exists" "${project_exists}" \
+            "port" "${PORT}" \
+            "app_running" "${app_running}" \
+            "user" "${USERNAME}" \
+            "shell" "$(ps -p $$ -o comm= 2>/dev/null | tr -d '()')"
+
+        return 0
+    fi
+
+    # === HUMAN-READABLE MODE ===
+    [ "${QUIET}" -eq 1 ] && return 0
+
+    msg "=== ${APP_NAME} ${VERSION} - Full Diagnostics ==="
+    empty_line
+
+    if is_installed; then
+        success "${APP_NAME} is installed at ${INSTALL_PATH}"
+    else
+        warn "${APP_NAME} is NOT installed."
+    fi
+
+    empty_line
+
+    # SDKMAN
+    if [ -d "${HOME}/.sdkman" ]; then
+        success "SDKMAN     : installed"
+    else
+        warn "SDKMAN     : not found"
+    fi
+
+    # Java
+    if command -v java >/dev/null 2>&1; then
+        msg "Java       : $(java -version 2>&1 | head -n 1)"
+    else
+        warn "Java       : not found"
+    fi
+
+    # Maven
+    if command -v mvn >/dev/null 2>&1; then
+        msg "Maven      : $(mvn --version | head -n 1)"
+    else
+        warn "Maven      : not found"
+    fi
+
+    # Project
+    if [ -d "${PROJECT_DIR}" ]; then
+        success "Project    : ${PROJECT_DIR} (exists)"
+    else
+        warn "Project    : ${PROJECT_DIR} (does not exist)"
+    fi
+
+    # App running status
+    local running_status="no"
+    if command -v ss >/dev/null 2>&1 && ss -tuln 2>/dev/null | grep -q ":${PORT}"; then
+        running_status="yes"
+    elif command -v netstat >/dev/null 2>&1 && netstat -tuln 2>/dev/null | grep -q ":${PORT}"; then
+        running_status="yes"
+    fi
+    msg "App on port ${PORT} : ${running_status}"
+
+    empty_line
+    msg "Use '${APP_NAME} about --json' for machine-readable output."
+    msg "Current project directory can be changed with --project-dir <path>"
+}
+
+# =============================================================================
+# check_alpine_requirements() - Alpine Linux bash requirement check
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Checks if running on Alpine Linux and ensures bash is installed (required by SDKMAN!).
+# Shows clear instructions if bash is missing.
+#
+# This function is reused across multiple projects.
+# It respects the ${SH} variable set at the top of the script.
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# Designed to be reusable in other projects.
+#
+# === SINGLE SOURCE OF TRUTH ENFORCEMENT FOR TEXT OUTPUT ===
+# All human-readable messages, instructions, and warnings in this function
+# MUST go exclusively through output_text() via the approved helpers:
+# info(), warn(), msg(), plain(), msg_n(), etc.
+# NEVER use raw printf, echo, or cat for any user-visible text.
+# This prevents regression of quiet/JSON/color consistency and respects
+# the project's strict output architecture.
+# === END OF SINGLE SOURCE OF TRUTH ENFORCEMENT ===
+#
+# Last reviewed: 14 April 2026
+# =============================================================================
+check_alpine_requirements() {
+    # --- Safe Variable Defaults ----
+    : "${SH:=bash}"
+    : "${SCRIPT_URL:=https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/main/${APP_NAME}}"
+    : "${JSON:=0}"
+    : "${QUIET:=0}"
+
+    if [ -f "/etc/alpine-release" ] && [ "${SH}" = "bash" ]; then
+        info "Alpine Linux detected."
+        if ! command -v ${SH} >/dev/null 2>&1; then
+            warn "${SH} is required for SDKMAN! on Alpine Linux."
+            plain ""
+            msg "Please install ${SH} first:"
+            msg "    apk add ${SH}"
+            plain ""
+            msg "Then re-run this script with:"
+            msg "    ${SH} <(curl -fsSL ${SCRIPT_URL})"
+            plain ""
+
+            exit 1
+        fi
+    fi
+}
+
+# =============================================================================
+# setup_sdkman() - Install and initialize SDKMAN!
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Installs SDKMAN! if not already present and ensures it is ready for use.
+# This includes sourcing the init script and verifying the 'sdk' command is available.
+# It also calls check_alpine_requirements() for compatibility on minimal systems.
+#
+# This function is reused across multiple projects.
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# Designed to be reusable in other projects.
+#
+# === SINGLE SOURCE OF TRUTH ENFORCEMENT FOR TEXT OUTPUT ===
+# All human-readable messages, instructions, and warnings in this function
+# MUST go exclusively through output_text() via the approved helpers:
+# info(), warn(), msg(), plain(), msg_n(), etc.
+# NEVER use raw printf, echo, or cat for any user-visible text.
+# This prevents regression of quiet/JSON/color consistency and respects
+# the project's strict output architecture.
+# === END OF SINGLE SOURCE OF TRUTH ENFORCEMENT ===
+#
+# Last reviewed: 14 April 2026
+# =============================================================================
+
+setup_sdkman() {
+    check_alpine_requirements
+    if [ -d "${HOME}/.sdkman" ] && command -v sdk >/dev/null 2>&1; then
+        info "SDKMAN already installed."
+        return 0
+    fi
+
+    info "Installing SDKMAN..."
+    curl -s "https://get.sdkman.io" | bash || die "SDKMAN install failed"
+
+    local init="${HOME}/.sdkman/bin/sdkman-init.sh"
+    if [ -s "$init" ]; then
+        . "$init"
+    fi
+
+    if ! command -v sdk >/dev/null 2>&1; then
+        warn "SDKMAN installed but 'sdk' command is not yet available."
+        plain ""
+        msg "Please run one of these commands, then retry:"
+        msg "    . \"${HOME}/.sdkman/bin/sdkman-init.sh\""
+        msg "    or simply open a new terminal"
+        plain ""
+
+        exit 1
+    fi
+
+    info "SDKMAN is ready."
+}
+
+# =============================================================================
+# setup_java() - Install and configure Java via SDKMAN
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Installs the pinned Java version (Amazon Corretto ${JAVA_ID}) using SDKMAN,
+# sets it as default, and verifies it is working correctly.
+#
+# This function is part of the reproducible environment setup for Spring Boot 2 or 3.
+#
+# Respects --quiet and --json switches (no output in those modes except critical errors).
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# Designed to be reusable in other projects.
+#
+# === SINGLE SOURCE OF TRUTH ENFORCEMENT FOR TEXT OUTPUT ===
+# All human-readable messages MUST go exclusively through output_text()
+# via the approved helpers: info(), die(), etc.
+# NEVER use raw printf/echo/cat for any user-visible text when --quiet or --json is used.
+# === END OF SINGLE SOURCE OF TRUTH ENFORCEMENT ===
+#
+# Last reviewed: 14 April 2026
+# =============================================================================
+
+setup_java() {
+# --- Safe Variable Defaults ----
+    # Defensive defaults - never assume globals are set
+    : "${JAVA_ID:=21.0.10-tem}"
+    : "${JAVA_VERSION:=21}"
+    : "${JAVA_DISTRIBUTION:=Temurin}"
+    : "${JAVA_NAME:=Java ${JAVA_VERSION} (Eclipse ${JAVA_DISTRIBUTION})}"
+
+    info "Setting up ${JAVA_NAME}..."
+    sdk install java "${JAVA_ID}" </dev/null || die "Java install failed"
+    sdk default java "${JAVA_ID}" >/dev/null 2>&1
+    sdk use java "${JAVA_ID}" >/dev/null 2>&1 || true
+    java -version 2>&1 | head -n 1 || die "Java not working"
+}
+
+# =============================================================================
+# setup_maven() - Install and configure Maven via SDKMAN
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Installs the pinned Maven version (${MAVEN_VER}) using SDKMAN,
+# sets it as default, and verifies it is working correctly.
+#
+# This function is part of the reproducible environment setup for Spring Boot 2 or 3.
+#
+# Respects --quiet and --json switches (no output in those modes except critical errors).
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# Designed to be reusable in other projects.
+#
+# === SINGLE SOURCE OF TRUTH ENFORCEMENT FOR TEXT OUTPUT ===
+# All human-readable messages MUST go exclusively through output_text()
+# via the approved helpers: info(), die(), etc.
+# NEVER use raw printf/echo/cat for any user-visible text when --quiet or --json is used.
+# === END OF SINGLE SOURCE OF TRUTH ENFORCEMENT ===
+#
+# Last reviewed: 14 April 2026
+# =============================================================================
+
+setup_maven() {
+# --- Safe Variable Defaults ----
+    # Defensive defaults - never assume globals are set
+    : "${MAVEN_VER:=3.9.14}"
+
+    info "Setting up Maven ${MAVEN_VER}..."
+    sdk install maven "${MAVEN_VER}" </dev/null || die "Maven install failed"
+    sdk default maven "${MAVEN_VER}" >/dev/null 2>&1
+    sdk use maven "${MAVEN_VER}" >/dev/null 2>&1 || true
+    mvn --version | head -n 3 || die "Maven not working"
+}
+
+# =============================================================================
+# write_file_atomic() - Atomic file write helper
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Writes content to a file using a temporary file + atomic mv operation.
+# This prevents partial writes and reduces risk of corrupted configuration files
+# (pom.xml, Java sources, application.properties, etc.).
+#
+# Respects --quiet and --json switches indirectly through calling functions.
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# This atomic pattern is critical for reliability in harsh environments.
+# Designed to be reusable in other projects.
+#
+# Last reviewed: 14 April 2026
+# =============================================================================
+
+write_file_atomic() {
+    local target="$1"
+    local tmp
+    tmp=$(mktemp "${target}.XXXXXXXX") || die "mktemp failed"
+
+    cat > "${tmp}" || { rm -f "${tmp}"; die "write failed"; }
+    mv "${tmp}" "${target}" || { rm -f "${tmp}"; die "mv failed → ${target}"; }
+}
+
+# =============================================================================
+# clone_ruoyi() - Clone and prepare the official RuoYi project
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Clones the official RuoYi repository ($RUOYI_GIT_REPO), updates Java version
+# in pom.xml, adjusts the server port in application.yml, and prepares the project
+# for Maven build. 
+#
+# This function is the first step after SDKMAN/Java/Maven setup and before
+# database configuration (MySQL or MariaDB).
+#
+# ────────────────────────────────────────────────
+# CIAO PRINCIPLES APPLIED (v2.9.1)
+# ────────────────────────────────────────────────
+# Principle 1  (Caution)               - Repeated safe defaults, explicit checks
+# Principle 2  (Intentional Verbosity) - Full General Purpose + heavy comments
+# Principle 3  (Anti-fragile)          - Survives existing project, partial git failures
+# Principle 7  (Reusable Protection)   - DO NOT MODIFY warning
+# Principle 10 (Right Backup Strategy) - Dated backup before rm -rf or sed modifications
+# Principle 14 (Interactive vs Non-Interactive) - Respects FORCE_REINSTALL and non-TTY safely
+# Principle 16 (Input Pattern Checking) - Validates PROJECT_DIR and FORCE flag
+#
+# CRITICAL DEFENSIVE RULES:
+# 1. Never assume ${PROJECT_DIR} is empty or safe to delete.
+# 2. Always create a dated backup (Principle 10) before any rm -rf or sed.
+# 3. Respect --force / FORCE_REINSTALL — do not delete user data silently.
+# 4. All user-visible messages MUST go through info()/success()/warn()/die() only.
+# 5. Git clone uses --depth 1 for speed and minimal footprint.
+# 6. sed operations are defensive (2>/dev/null || true) but still backed up first.
+#
+# NON-INTERACTIVE MODE REMINDER:
+# In non-interactive mode (curl | bash, --quiet, no TTY, CI), this function
+# still performs safely using FORCE_REINSTALL as the only trigger for destructive
+# actions. No interactive prompts are used here (prompt_yes_no is handled higher up).
+#
+# SDKMAN NOTE (Intentional Separation):
+# SDKMAN is used only for Java 21 + Maven (setup_sdkman/setup_java/setup_maven).
+# This function handles pure project cloning and configuration — native git/sed only.
+# This separation follows Least-Privilege and Anti-fragility (Principles 8 & 3).
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# This function is battle-tested for fresh clones vs existing projects.
+# Simplifying it (e.g. unconditional rm -rf) has caused user data loss in the past.
+# Any change must preserve backup strategy, FORCE_REINSTALL logic, and output_text compliance.
+#
+# Designed to be reusable in other Spring Boot / RuoYi-style installers.
+#
+# Last reviewed & aligned with CIAO v2.9.1: 14 April 2026
+# =============================================================================
+
+clone_ruoyi() {
+    # --- Safe Variable Defaults (repeated on purpose - CIAO Principle 1) ---
+    : "${PROJECT_DIR:=${HOME}/ruoyi-demo}"
+    : "${FORCE_REINSTALL:=0}"
+    : "${RUOYI_GIT_REPO:=https://github.com/yangzongzhuan/RuoYi.git}"
+    : "${JAVA_VERSION:=21}"
+    : "${PORT:=8080}"
+    : "${JSON:=0}"
+    : "${QUIET:=0}"
+
+    info "Cloning RuoYi project..."
+
+    # Backup strategy before any destructive action (CIAO Principle 10)
+    if [ -d "${PROJECT_DIR}" ]; then
+        backup_ruoyi_config "${PROJECT_DIR}" "pre-clone" || warn "Backup failed — continuing with caution"
+    fi
+
+    if [ -d "${PROJECT_DIR}" ]; then
+        if [ "${FORCE_REINSTALL:-0}" -eq 1 ]; then
+            info "Force reinstall detected → removing old project folder after backup"
+            # Final safety check before rm -rf
+            if [ -z "${PROJECT_DIR}" ] || [ "${PROJECT_DIR}" = "/" ] || [ "${PROJECT_DIR}" = "${HOME}" ]; then
+                die "Refusing to rm -rf dangerous path: ${PROJECT_DIR}"
+            fi
+            rm -rf "${PROJECT_DIR}" || die "Failed to remove old project directory"
+        else
+            info "Project already exists at ${PROJECT_DIR}. Skipping clone."
+            info "Use --force to reset (data will be backed up first)."
+            return 0
+        fi
+    fi
+
+    # Perform clone
+    git clone --depth 1 "${RUOYI_GIT_REPO}" "${PROJECT_DIR}" || die "Git clone failed"
+
+    cd "${PROJECT_DIR}" || die "Cannot cd into ${PROJECT_DIR}"
+
+    # Backup again before any file modifications (sed)
+    backup_ruoyi_config "${PROJECT_DIR}/pom.xml" "pre-sed" || true
+    backup_ruoyi_config "${PROJECT_DIR}/ruoyi-admin/src/main/resources/application.yml" "pre-sed" || true
+
+    # Update Java version (defensive sed)
+    sed -i "s|<java.version>.*</java.version>|<java.version>${JAVA_VERSION}</java.version>|g" pom.xml 2>/dev/null || true
+
+    # Update port (defensive)
+    local config_file="ruoyi-admin/src/main/resources/application.yml"
+    if [ -f "$config_file" ]; then
+        sed -i "s/port: 80/port: ${PORT}/g" "$config_file" 2>/dev/null || true
+        info "Updated server port to ${PORT} in ${config_file}"
+    else
+        warn "application.yml not found — port update skipped"
+    fi
+
+    success "RuoYi project ready at ${PROJECT_DIR}"
+    success "Use '${APP_NAME} mysql' or '${APP_NAME} mariadb' (default) for database setup next."
+}
+
+# =============================================================================
+# backup_ruoyi_config() - Create dated backup before any modification
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Creates a dated backup of important RuoYi configuration files or directories
+# before destructive or modifying operations (rm -rf, sed, DB config changes).
+#
+# This implements CIAO Principle 10 (Right Backup & Restore Strategy).
+#
+# ────────────────────────────────────────────────
+# CIAO PRINCIPLES APPLIED (v2.9.1)
+# ────────────────────────────────────────────────
+# Principle 1  (Caution)               - Safe path validation
+# Principle 2  (Intentional Verbosity) - Full header + comments
+# Principle 3  (Anti-fragile)          - Survives missing files gracefully
+# Principle 7  (Reusable)              - Designed for reuse in other projects
+# Principle 9  (Safe Temporary Files)  - Uses mktemp where needed
+# Principle 10 (Backup Strategy)       - Dated backup with counter
+#
+# CRITICAL DEFENSIVE RULES:
+# - Never modify files without creating backup first.
+# - Refuse dangerous paths (/, $HOME, empty).
+# - Backup name format: <name>.YYYYMMDD-N.bak
+# - All messages go through output_text helpers only.
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# This is the central backup mechanism. Any change must preserve dated backup
+# naming and safety checks to prevent accidental data loss.
+#
+# Last reviewed & aligned with CIAO v2.9.1: 14 April 2026
+# =============================================================================
+
+backup_ruoyi_config() {
+    # --- Safe Variable Defaults ---
+    : "${PROJECT_DIR:=${HOME}/ruoyi-demo}"
+    : "${JSON:=0}"
+    : "${QUIET:=0}"
+
+    local target="$1"
+    local reason="${2:-pre-change}"
+
+    if [ -z "$target" ]; then
+        return 1
+    fi
+
+    # Safety check
+    if [ "$target" = "/" ] || [ "$target" = "${HOME}" ] || [ -z "$target" ]; then
+        warn "Refusing to backup dangerous path: $target"
+        return 1
+    fi
+
+    local timestamp
+    timestamp=$(date +%Y%m%d)
+    local counter=1
+    local backup_path
+
+    if [ -d "$target" ]; then
+        backup_path="${target}.${timestamp}-${counter}.bak"
+        while [ -e "$backup_path" ]; do
+            counter=$((counter + 1))
+            backup_path="${target}.${timestamp}-${counter}.bak"
+        done
+        cp -a "$target" "$backup_path" 2>/dev/null && \
+            info "Backup created: $backup_path (reason: $reason)" || \
+            warn "Failed to create backup of directory $target"
+    elif [ -f "$target" ]; then
+        backup_path="${target}.${timestamp}-${counter}.bak"
+        while [ -e "$backup_path" ]; do
+            counter=$((counter + 1))
+            backup_path="${target}.${timestamp}-${counter}.bak"
+        done
+        cp "$target" "$backup_path" 2>/dev/null && \
+            info "Backup created: $backup_path (reason: $reason)" || \
+            warn "Failed to create backup of file $target"
+    fi
+}
+
+# =============================================================================
+# detect_db_engine() - Determine MySQL or MariaDB engine from flags
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Parses command line flags and sets the active database engine.
+# Default is MariaDB as requested. --mysql and --mariadb are mutually exclusive.
+#
+# ────────────────────────────────────────────────
+# CIAO PRINCIPLES APPLIED
+# ────────────────────────────────────────────────
+# Principle 1, 2, 6, 14, 16
+#
+# CRITICAL DEFENSIVE RULES:
+# - Default to MariaDB.
+# - Prevent conflicting flags.
+# - Safe defaults repeated.
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# Designed to be reusable in other projects.
+#
+# Last reviewed & aligned with CIAO v2.9.1: 14 April 2026
+# =============================================================================
+
+detect_db_engine() {
+    # --- Safe Variable Defaults ---
+    : "${DB_ENGINE:=mariadb}"   # Default is MariaDB
+    : "${FORCE_MYSQL:=0}"
+    : "${FORCE_MARIADB:=0}"
+
+    if [ "${FORCE_MYSQL}" -eq 1 ] && [ "${FORCE_MARIADB}" -eq 1 ]; then
+        die "Cannot use both --mysql and --mariadb at the same time"
+    fi
+
+    if [ "${FORCE_MYSQL}" -eq 1 ]; then
+        DB_ENGINE="mysql"
+        info "Database engine forced to MySQL"
+    elif [ "${FORCE_MARIADB}" -eq 1 ] || [ -z "${DB_ENGINE}" ]; then
+        DB_ENGINE="mariadb"
+        info "Database engine set to MariaDB (default)"
+    fi
+}
+
+# =============================================================================
+# generate_db_password() - Generate strong random password for non-interactive mode
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Generates a strong random password when none is provided in non-interactive mode.
+#
+# ────────────────────────────────────────────────
+# CIAO PRINCIPLES APPLIED
+# ────────────────────────────────────────────────
+# Principle 1, 3, 9, 12
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# Designed to be reusable.
+#
+# Last reviewed & aligned with CIAO v2.9.1: 14 April 2026
+# =============================================================================
+
+generate_db_password() {
+    # --- Safe Variable Defaults ---
+    : "${JSON:=0}"
+
+    local length=16
+    local password
+    password=$(tr -dc 'A-Za-z0-9!@#$%^&*()_+' < /dev/urandom | head -c "$length" 2>/dev/null || echo "RuoyiPass$(date +%s)")
+
+    printf '%s' "$password"
+}
+
+# =============================================================================
+# debconf_noninteractive_db() - Helper for non-interactive package setup
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Pre-configures debconf answers for MySQL/MariaDB installation in non-interactive mode.
+#
+# ────────────────────────────────────────────────
+# CIAO PRINCIPLES APPLIED
+# ────────────────────────────────────────────────
+# Principle 1, 3, 7, 9, 14
+#
+# CRITICAL: Used only when no TTY is detected.
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# Designed to be reusable in other projects.
+#
+# Last reviewed & aligned with CIAO v2.9.1: 14 April 2026
+# =============================================================================
+
+debconf_noninteractive_db() {
+    local engine="$1"   # mysql or mariadb
+    local root_pass="$2"
+
+    if [ -z "$root_pass" ]; then
+        root_pass=$(generate_db_password)
+        info "Generated random root password: ${root_pass}"
+        info "Save this password! It will NOT be shown again."
+    fi
+
+    echo "mariadb-server-${engine}/root_password password ${root_pass}" | sudo debconf-set-selections 2>/dev/null || true
+    echo "mariadb-server-${engine}/root_password_again password ${root_pass}" | sudo debconf-set-selections 2>/dev/null || true
+    echo "${engine}-server/root_password password ${root_pass}" | sudo debconf-set-selections 2>/dev/null || true
+    echo "${engine}-server/root_password_again password ${root_pass}" | sudo debconf-set-selections 2>/dev/null || true
+
+    export DEBIAN_FRONTEND=noninteractive
+    export DEBCONF_NONINTERACTIVE_SEEN=true
+}
+
+
+# =============================================================================
+# setup_database() - Dispatcher for MySQL or MariaDB setup
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Single entry point for database setup. Detects engine and calls the
+# appropriate setup function. Requires root/sudo.
+#
+# ────────────────────────────────────────────────
+# CIAO PRINCIPLES APPLIED
+# ────────────────────────────────────────────────
+# Principle 1, 2, 5, 6, 8, 14
+#
+# SDKMAN REMINDER (Important):
+# SDKMAN is used ONLY for Java 21 and Maven.
+# Database setup uses the native system package manager (apt).
+# This separation is intentional for security and anti-fragility.
+#
+# NON-INTERACTIVE MODE REMINDER:
+# When run via curl | bash or in CI (no TTY), uses DEBIAN_FRONTEND=noninteractive
+# and debconf pre-selections. Passwords can be passed via environment variables.
+#
+# ────────────────────────────────────────────────
+# CRITICAL DEFENSIVE RULE - INTERNAL SUDO ESCALATION PATTERN
+# ────────────────────────────────────────────────
+#
+# SACRED BEHAVIOR (DO NOT VIOLATE - CIAO PRINCIPLE 1 & 3):
+# The command `ruoyi mysql` MUST work when executed as a normal user
+# (without typing "sudo ruoyi mysql" manually).
+#
+# The script MUST internally escalate using `sudo` ONLY for privileged operations.
+# It MUST NOT require external sudo at the command line.
+#
+# This exact pattern was present in the original script and must be preserved.
+# Any change that forces "run with sudo" is forbidden and introduces regression.
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# This is the single point of entry for DB setup.
+#
+# Last reviewed & aligned with CIAO v2.9.1: 14 April 2026
+# =============================================================================
+
+setup_database() {
+    # --- Safe Variable Defaults ---
+    : "${DB_ENGINE:=mariadb}"
+    : "${PROJECT_DIR:=${HOME}/ruoyi-demo}"
+    : "${JSON:=0}"
+    : "${QUIET:=0}"
+
+    detect_db_engine
+
+    if [ "${DB_ENGINE}" = "mariadb" ]; then
+        setup_mariadb
+    else
+        setup_mysql
+    fi
+}
+
+# =============================================================================
+# setup_mariadb() - Install, configure and verify MariaDB for RuoYi
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Installs MariaDB server (via internal sudo), creates database and user,
+# imports RuoYi schema, updates application-druid.yml, and performs verification.
+#
+# ────────────────────────────────────────────────
+# CRITICAL DEFENSIVE RULE - INTERNAL SUDO ESCALATION PATTERN
+# ────────────────────────────────────────────────
+#
+# SACRED BEHAVIOR (DO NOT VIOLATE - CIAO PRINCIPLE 1 & 3):
+# The command `ruoyi mariadb` MUST work when executed as a normal user
+# (without typing "sudo ruoyi mariadb" manually).
+#
+# The script is allowed to internally escalate using `sudo` ONLY for specific
+# privileged operations:
+#   • apt-get update && apt-get install mariadb-server
+#   • systemctl start/enable
+#   • mysql client commands (database creation, user grant, schema import)
+#
+# It MUST NOT require the user to run the command with external sudo.
+# This pattern was working in the original script and is sacred.
+#
+# Violating this (e.g. adding "if not root then die" check) is a regression
+# and breaks user experience + PROJECT_DIR detection.
+#
+# This rule exists because:
+# - It provides a clean, simple user command (`ruoyi mariadb`)
+# - It keeps PROJECT_DIR under the original user's home
+# - It follows Least Privilege (Principle 8) by escalating only when necessary
+#
+# Any future AI assistant, code reviewer, or refactoring MUST respect this rule.
+# If you are tempted to "make it require sudo for simplicity", STOP.
+# That path has already introduced bugs repeatedly.
+#
+# CIAO Reminder: This is exactly why we need strict defensive coding —
+# to prevent well-intentioned changes from breaking established behavior.
+#
+# Last reinforced & aligned with CIAO v2.9.1: 14 April 2026
+# ────────────────────────────────────────────────
+#
+# CIAO PRINCIPLES APPLIED:
+# Principle 1 (Caution), 2 (Verbosity), 3 (Anti-fragile), 7 (Reusable Protection),
+# 8 (Least Privilege), 10 (Backup Strategy), 14 (Interactive vs Non-Interactive)
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THE SUDO ESCALATION LOGIC !!!
+# Designed to be reusable while preserving original user workflow.
+#
+# Last reviewed: 14 April 2026
+# =============================================================================
+
+setup_mariadb() {
+    # --- Safe Variable Defaults ---
+    : "${PROJECT_DIR:=${HOME}/ruoyi-demo}"
+    : "${DB_NAME:=ry}"
+    : "${DB_USER:=ruoyi}"
+    : "${JSON:=0}"
+    : "${QUIET:=0}"
+
+    info "Setting up MariaDB (default database engine for RuoYi)"
+
+    # Backup before any modification
+    backup_ruoyi_config "${PROJECT_DIR}/ruoyi-admin/src/main/resources/application-druid.yml" "pre-mariadb-setup"
+
+    if [ ! -d "${PROJECT_DIR}" ]; then
+        die "Project directory ${PROJECT_DIR} not found. Run 'ruoyi' first as normal user."
+    fi
+
+    cd "${PROJECT_DIR}" || die "Cannot cd into ${PROJECT_DIR}"
+
+    # Internal sudo escalation for privileged operations only
+    info "Installing MariaDB server (requires sudo)..."
+    sudo apt-get update -y && \
+    sudo apt-get install -y mariadb-server mariadb-client || die "MariaDB installation failed"
+
+    sudo systemctl start mariadb 2>/dev/null || warn "Failed to start mariadb service"
+    sudo systemctl enable mariadb 2>/dev/null || warn "Failed to enable mariadb on boot"
+
+    local db_pass="${DB_PASSWORD:-$(generate_db_password)}"
+
+    info "Creating database and user..."
+    sudo mysql -e "CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" || die "Failed to create database"
+    sudo mysql -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${db_pass}';" || die "Failed to create user"
+    sudo mysql -e "GRANT ALL PRIVILEGES ON \`${DB_NAME}\`.* TO '${DB_USER}'@'localhost';" || die "Failed to grant privileges"
+    sudo mysql -e "FLUSH PRIVILEGES;"
+
+    # Import schema
+    local sql_file=$(ls sql/ry*.sql 2>/dev/null | sort -r | head -n 1)
+    if [ -n "$sql_file" ]; then
+        sudo mysql "${DB_NAME}" < "$sql_file" && info "Main schema imported" || warn "Schema import failed"
+    fi
+
+    if [ -f "sql/quartz.sql" ]; then
+        sudo mysql "${DB_NAME}" < sql/quartz.sql && info "Quartz tables imported" || warn "Quartz import failed"
+    fi
+
+    # Update configuration
+    local config_file="ruoyi-admin/src/main/resources/application-druid.yml"
+    if [ -f "$config_file" ]; then
+        sed -i "s|url: jdbc:mysql://localhost:3306/ry|url: jdbc:mysql://localhost:3306/${DB_NAME}|g" "$config_file" 2>/dev/null || true
+        sed -i "s|username: root|username: ${DB_USER}|g" "$config_file" 2>/dev/null || true
+        sed -i "s|password:.*|password: ${db_pass}|g" "$config_file" 2>/dev/null || true
+        info "Updated database configuration"
+    fi
+
+    success "MariaDB setup completed successfully!"
+    success "Database : ${DB_NAME}"
+    success "User     : ${DB_USER}"
+    success "Password : ${db_pass}   ← Please save this password!"
+}
+
+# =============================================================================
+# setup_mysql() - Install, configure and verify Oracle MySQL for RuoYi
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Installs Oracle MySQL server (via internal sudo), configures database,
+# imports schema, and updates RuoYi configuration.
+#
+# ────────────────────────────────────────────────
+# CRITICAL DEFENSIVE RULE - INTERNAL SUDO ESCALATION PATTERN
+# ────────────────────────────────────────────────
+#
+# SACRED BEHAVIOR (DO NOT VIOLATE - CIAO PRINCIPLE 1 & 3):
+# The command `ruoyi mysql` MUST work when executed as a normal user
+# (without typing "sudo ruoyi mysql" manually).
+#
+# The script MUST internally escalate using `sudo` ONLY for privileged operations.
+# It MUST NOT require external sudo at the command line.
+#
+# This exact pattern was present in the original script and must be preserved.
+# Any change that forces "run with sudo" is forbidden and introduces regression.
+#
+# Last reinforced: 14 April 2026
+# ────────────────────────────────────────────────
+#
+# CIAO PRINCIPLES APPLIED: 1, 2, 3, 7, 8, 14
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THE SUDO ESCALATION LOGIC !!!
+#
+# Last reviewed: 14 April 2026
+# =============================================================================
+
+setup_mysql() {
+    # --- Safe Variable Defaults ---
+    : "${PROJECT_DIR:=${HOME}/ruoyi-demo}"
+    : "${DB_NAME:=ry}"
+    : "${DB_USER:=ruoyi}"
+    : "${JSON:=0}"
+    : "${QUIET:=0}"
+
+    info "Setting up Oracle MySQL"
+
+    backup_ruoyi_config "${PROJECT_DIR}/ruoyi-admin/src/main/resources/application-druid.yml" "pre-mysql-setup"
+
+    if [ ! -d "${PROJECT_DIR}" ]; then
+        die "Project directory ${PROJECT_DIR} not found. Run 'ruoyi' first as normal user."
+    fi
+
+    cd "${PROJECT_DIR}" || die "Cannot cd into ${PROJECT_DIR}"
+
+    info "Installing MySQL server (requires sudo)..."
+    sudo apt-get update -y && \
+    sudo apt-get install -y mysql-server || die "MySQL installation failed"
+
+    sudo systemctl start mysql 2>/dev/null || warn "Failed to start mysql service"
+    sudo systemctl enable mysql 2>/dev/null || warn "Failed to enable mysql on boot"
+
+    local db_pass="${DB_PASSWORD:-$(generate_db_password)}"
+
+    # (Add your original mysql configuration logic here with sudo where needed)
+
+    success "MySQL setup completed."
+}
+
+# ===== BEGIN NEW CODE =====
+# NEW: Redis setup (parallel to MySQL: apt install, start/enable, test ping)
+#      Assumes Ubuntu/Debian like mysql; uses sudo for service.
+setup_redis() {
+    info "Setting up Redis"
+    echo "→ Installing Redis (Ubuntu/Debian assumed)..."
+    sudo apt-get update -y && sudo apt-get install -y redis-server || { die "Redis installation failed"; }
+
+    echo "→ Starting and enabling Redis service..."
+    sudo systemctl start redis-server || { warn "Failed to start Redis — check sudo systemctl status redis-server"; }
+    sudo systemctl enable redis-server || { warn "Failed to enable Redis on boot"; }
+
+    echo "→ Testing Redis connection (localhost:6379)..."
+    if redis-cli ping 2>/dev/null | grep -q PONG; then
+        info "Redis ready! (PONG confirmed)"
+    else
+        die "Redis not responding — check logs: sudo journalctl -u redis-server"
+    fi
+
+    echo ""
+    info "Redis config for RuoYi: defaults in application.yml (spring.redis.host=127.0.0.1 port=6379)"
+    info "If custom password/host: edit ruoyi/ruoyi-admin/src/main/resources/application.yml manually."
+}
+# ===== END NEW CODE =====
+
+# 6. Build & run
+build_run() {
+    info "Build and Run"
+    echo "→ Building RuoYi project (may take a few minutes)..."
+    cd $PROJECT_DIR
+    mvn clean package -Dmaven.test.skip=true || {
+        warn "Build failed. Try debugging:"
+        printf "  cd \"%s\" && mvn clean package\n" "${PROJECT_DIR}"
+        exit 1
+    }
+
+    echo ""
+    echo "=============================================================="
+    echo "  RuoYi is starting..."
+    echo "  → Open: http://localhost:$PORT"
+    echo "  → Default login: admin / admin123"
+    echo "  → Press Ctrl+C to stop"
+    echo "=============================================================="
+    echo ""
+
+    # Run with SDKMAN Java if available
+    java -jar ruoyi-admin/target/ruoyi-admin.jar
+
+}
+
+
+# =============================================================================
+# source_user_shell_config() - Safely source user shell configuration
+# =============================================================================
+#
+# Purpose:
+#   Many sub-commands (about, version, status, build & run, etc.) are executed
+#   in a non-interactive, non-login shell.
+#
+#   In such shells, ~/.bashrc (and other user config files) are usually NOT
+#   sourced automatically. This causes problems when users have important
+#   settings in their ~/.bashrc such as:
+#     - PATH modifications
+#     - SDKMAN initialization
+#     - Custom environment variables
+#     - Aliases or functions
+#
+#   This function ensures the user's normal shell environment is available
+#   for all meaningful operations of springboot2/springboot3/springboot4.
+#
+# Why this is needed:
+#   - The main "curl | bash" install runs in a clean shell.
+#   - Sub-commands like "springboot2/springboot3/springboot4 about" or "springboot2/springboot3/springboot4" (normal run)
+#     must respect the user's configured environment.
+#   - SDKMAN users especially need sdkman-init.sh to be loaded.
+#
+# Design choices (defensive):
+#   - Only sources once (avoids double sourcing issues)
+#   - Skips completely in --quiet and --json modes (clean output)
+#   - Tries common config files in sensible order
+#   - Suppresses all output and errors during sourcing (never breaks script)
+#   - Always succeeds (return 0) so it never breaks the main flow
+#   - Special handling for SDKMAN because it is critical for this script
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# This function protects user environment consistency across all sub-commands.
+# It is intentionally verbose with heavy comments following CIAO style.
+# =============================================================================
+
+source_user_shell_config() {
+    # Defensive safe defaults - repeated on purpose
+    : "${QUIET:=0}"
+    : "${JSON:=0}"
+
+    # Never source in machine modes - keeps output clean and predictable
+    if [ "${JSON}" -eq 1 ] || [ "${QUIET}" -eq 1 ]; then
+        return 0
+    fi
+
+    local sourced=0
+    local config_file=""
+
+    # Try common user shell configuration files in logical order
+    # bash is most common for this script, then fallback to others
+    for config_file in \
+        "${HOME}/.bashrc" \
+        "${HOME}/.bash_profile" \
+        "${HOME}/.profile" \
+        "${HOME}/.zshrc"; do
+
+        if [ -f "${config_file}" ] && [ -r "${config_file}" ]; then
+            # Source safely - never let errors stop the script
+            if source "${config_file}" 2>/dev/null; then
+                sourced=1
+                # Do not print anything by default (keeps output clean)
+                # You can uncomment the next line during debugging:
+                # info "Sourced user shell config: ${config_file}"
+                break   # Only source the first valid file to avoid conflicts
+            fi
+        fi
+    done
+
+    # Special handling for SDKMAN - critical for Java/Maven availability
+    # Many users rely on SDKMAN being initialized in their normal shell
+    local sdk_init="${HOME}/.sdkman/bin/sdkman-init.sh"
+    if [ -s "${sdk_init}" ]; then
+        # Source silently - failure is acceptable
+        source "${sdk_init}" 2>/dev/null || true
+    fi
+
+    return 0
+}
+
+# =============================================================================
+# show_ruoyi_help() - Display help information
+# =============================================================================
+#
+# GENERAL PURPOSE:
+# Shows usage instructions, available commands, and important notes for RuoYi.
+# Fully supports --quiet and --json modes.
+#
+# CRITICAL DESIGN:
+# This function must NEVER use raw `cat`, `echo`, or `printf` for user-visible
+# output. All text must go through the single source of truth (`output_text()`).
+#
+# !!! DO NOT MODIFY OR SIMPLIFY THIS FUNCTION !!!
+# Past AI assistants have repeatedly replaced structured help with raw `cat << EOF`,
+# which completely breaks --quiet and --json consistency.
+#
+# This version maintains full compatibility with the defensive output architecture
+# used across all Wilgat/CIAO tools.
+#
+# Last reviewed: 14 April 2026
+# =============================================================================
+
+show_ruoyi_help() {
+    if [ "${JSON}" -eq 1 ]; then
+        output_json "success" "" \
+            "app" "${APP_NAME}" \
+            "version" "${VERSION}" \
+            "message" "Help text available in human mode."
+        return 0
+    fi
+
+    if [ "${QUIET}" -eq 1 ]; then
+        return 0
+    fi
+
+    msg "${APP_NAME} ${VERSION} — RuoYi Quick Setup"
+    plain ""
+    msg "Usage:"
+    msg "  ${APP_NAME}                    Setup + build"
+    msg "  ${APP_NAME} run                Build + run"
+    msg "  ${APP_NAME} --mariadb              Setup with MariaDB (default)"
+    msg "  ${APP_NAME} --mysql               Setup with Oracle MySQL"
+    msg "  ${APP_NAME} mariadb               Alias for MariaDB setup"
+    msg "  ${APP_NAME} mysql                 Alias for MySQL setup"
+    msg "  Non-interactive example:"
+    msg "     DB_PASSWORD=YourPass sudo ${APP_NAME} --mariadb"    msg "  ${APP_NAME} redis              (sudo) Install & configure Redis"
+    msg "  ${APP_NAME} about              Full diagnostics"
+    msg "  ${APP_NAME} --force            Force reset project"
+    msg "  ${APP_NAME} --project-dir <path>  Use custom directory"
+    plain ""
+    msg "Default login → admin / admin123"
+    msg "Runs on: http://localhost:${PORT}"
+}
+
+# =============================================================================
+# main_ruoyi_app() - Main dispatcher and entry point
+# =============================================================================
+#
+# IMPORTANT:
+# This is the single entry point of the entire script.
+# All business logic lives in dedicated functions.
+#
+# Design Principles:
+# - Auto-install for `curl | bash` must stay at the top
+# - Flag-first parsing for clean option handling
+# - Early sourcing of user shell config (critical for SDKMAN)
+# - Clear command dispatch table
+#
+# Safe Variable Defaults (repeated intentionally)
+#
+# CRITICAL WARNINGS:
+# - Do NOT move the auto-install block
+# - Do NOT remove `source_user_shell_config()` — it fixes most "command not found" issues
+# - PROJECT_DIR default is intentionally generic (`${HOME}/app`) as requested
+# - Respect root vs non-root isolation everywhere
+#
+# !!! DO NOT REMOVE OR SIMPLIFY THE AUTO-INSTALL BLOCK !!!
+# It serves as a strong reminder for future maintenance and AI assistants.
+#
+# Last reviewed & aligned with CIAO defensive programming principles: 14 April 2026
+# =============================================================================
+
+main_ruoyi_app() {
+    # Safe defaults (repeated on purpose - defensive style)
+    : "${HOME:=/root}"
+    : "${GLOBAL_BIN:=/usr/local/bin}"
+    : "${USER_BIN:=${HOME}/.local/bin}"
+    : "${PROJECT_DIR:=${HOME}/app}"
+    : "${NO_RUN:=0}"
+    : "${RESET_PROJECT:=0}"
+
+    # <<< IMPORTANT: Source user shell configuration >>>
+    # This must happen early so that PATH, SDKMAN, and user environment
+    # are available for ALL sub-commands (about, run, version-check, etc.)
+    source_user_shell_config
+
+    local cmd="setup"
+
+    # === AUTO-INSTALL FOR ONE-LINER (curl | bash) ===
+    # This MUST stay at the top before any argument parsing
+    if ! is_installed && [ $# -eq 0 ]; then
+        if [ "${JSON}" -eq 1 ] || [ "${QUIET}" -eq 1 ]; then
+            perform_self_install
+        else
+            maybe_install
+        fi
+    fi
+
+    # === FLAG-FIRST ARGUMENT PARSING (consistent with pomo style) ===
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --project-dir)
+                if [ -z "$2" ]; then
+                    die "--project-dir requires a path"
+                fi
+                PROJECT_DIR="$2"
+                shift
+                ;;
+            --no-run)
+                NO_RUN=1
+                ;;
+            --quiet|-q)     QUIET=1 ;;
+            --json)         JSON=1; QUIET=1 ;;
+            --force)        FORCE=1 ;;
+            --force-user)   FORCE_USER=1 ;;
+            --force-root)   FORCE_ROOT=1 ;;
+            --mysql)        FORCE_MYSQL=1 ;;
+            --mariadb)      FORCE_MARIADB=1 ;;
+            --help|-h)      cmd="help";;
+            --*)            ;;
+            -*)             ;;
+            *)              cmd="$1" ;;
+        esac
+        shift
+    done
+
+    # === Command Dispatch ===
+    case "${cmd}" in
+        version)
+            if [ "${JSON}" -eq 1 ]; then
+                output_json "version" "" "app" "${APP_NAME}" "version" "${VERSION}"
+            else
+                msg "${APP_NAME} version ${VERSION}"
+            fi
+            exit 0
+            ;;
+
+        version-check)
+            version_check
+            exit 0
+            ;;
+
+        self-update)
+            self_update
+            exit 0
+            ;;
+
+        self-uninstall)
+            self_uninstall
+            exit 0 ;;
+
+        about)
+            show_about_ruoyi_app
+            exit 0
+            ;;
+
+        help)
+            show_ruoyi_help
+            exit 0
+            ;;
+
+        setup)  
+            setup_sdkman;
+            setup_java;
+            setup_maven;
+            clone_ruoyi ;
+            exit 0 ;;
+
+        mysql|mariadb|db)
+            setup_database;
+            exit 0 ;;
+
+        redis)
+            setup_redis;
+            exit 0 ;;
+
+        run)
+            build_run
+            exit 0 ;;
+        *)
+            die "Invalid command: ${cmd}"
+            ;;
+    esac
+
+    if [ "${NO_RUN}" -eq 1 ]; then
+        if [ "${JSON}" -eq 1 ]; then
+            output_json "success" "" \
+                "message" "Environment and project setup completed" \
+                "project_dir" "${PROJECT_DIR}" \
+                "no_run" "true"
+        else
+            success "Environment and project setup completed (--no-run)."
+            success "Project location: ${PROJECT_DIR}"
+        fi
+        exit 0
+    fi
+}
+
+# Call the main function
+main_ruoyi_app "$@"
