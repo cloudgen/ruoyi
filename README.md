@@ -1,6 +1,6 @@
 # ruoyi
 
-[![Version](https://img.shields.io/badge/Version-2.0.0-blue?style=flat-square)](https://github.com/cloudgen/ruoyi)
+[![Version](https://img.shields.io/badge/Version-2.1.0-blue?style=flat-square)](https://github.com/cloudgen/ruoyi)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 [![CIAO](https://img.shields.io/badge/Philosophy-CIAO%20(Caution%20%E2%80%A2%20Intentional%20%E2%80%A2%20Anti--fragile%20%E2%80%A2%20Over--engineered)-purple.svg)](https://github.com/Wilgat/ciao)
 [![Made with CIAO](https://img.shields.io/badge/Made%20with%20❤️-CIAO-00AEEF?style=flat-square)](https://github.com/Wilgat/ciao)
@@ -110,7 +110,7 @@ This tool belongs to the same defensive family as `springboot2` / `springboot3` 
 
 ---
 
-## v2.0.0 Major Improvements (2026-04-14)
+## v2.1.0 Major Improvements (2026-04-14)
 
 - Added Redis setup command
 - Improved root vs non-root isolation and multi-user safety

@@ -80,9 +80,9 @@ DESCRIPTION="Ruoyi quick setup"
 REMOTE_VERSION=$VERSION
 SH=bash
 
-REPO_USER=cloudgen
-REPO_NAME=ruoyi
-SCRIPT_URL="https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/main/${APP_NAME}"
+: "${REPO_USER:=cloudgen}"
+: "${REPO_NAME:=ruoyi}"
+: "${SCRIPT_URL:=https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/main/${APP_NAME}}"
 
 # ----------------------------------- Force Flags  ----------------------------
 : "${FORCE_USER:=0}"
@@ -694,7 +694,7 @@ get_installed_version_v1() {
 #
 # GENERAL PURPOSE:
 # Returns 0 (true) if ver1 > ver2, otherwise returns 1 (false).
-# Used by version_check_v1(), version_check_v2() and self_update() 
+# Used by version_check_v1(), ..._v2() ..._v3(), and self_update() 
 #   to prevent incorrect downgrades.
 #
 # Safe Variable Defaults
@@ -761,7 +761,7 @@ version_gt_v1() {
 }
 
 # =============================================================================
-# version_check_v2() - Compare local vs remote version + suggest install
+# version_check_v3() - Compare local vs remote version + suggest install
 # =============================================================================
 #
 # GENERAL PURPOSE:
@@ -791,7 +791,7 @@ version_gt_v1() {
 # Last reviewed & polished: 14 April 2026
 # =============================================================================
 
-version_check_v2() {
+version_check_v3() {
     # --- Safe Variable Defaults ----
     # Defensive defaults - never assume globals are set
     # should be general enough
@@ -800,7 +800,7 @@ version_check_v2() {
     : "${QUIET:=0}"
     : "${REPO_USER:=user}"
     : "${REPO_NAME:=app}"
-    : "${SCRIPT_URL:=https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/main/${APP_NAME}"
+    : "${SCRIPT_URL:=https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/main/${APP_NAME}}"
 
     # Fetch remote version
     REMOTE_VERSION=$(curl -fsSL "${SCRIPT_URL}" 2>/dev/null | grep '^VERSION="' | cut -d'"' -f2 || echo "")
@@ -818,7 +818,7 @@ version_check_v2() {
     local_version=$(get_installed_version_v1)
 
     if [ "${JSON}" -eq 1 ]; then
-        output_json "version_check_v2" \
+        output_json "version_check_v3" \
             "local_version" "$local_version" \
             "remote_version" "$REMOTE_VERSION" \
             "is_latest" "$( [ "$local_version" = "$REMOTE_VERSION" ] && echo "true" || \
@@ -889,7 +889,7 @@ self_update_v3() {
     fi
 
     FORCE_REINSTALL=1
-    perform_self_install_v2
+    perform_self_install_v3
 }
 
 # =============================================================================
@@ -1104,7 +1104,7 @@ add_to_shell_path() {
 #
 # CRITICAL DEFENSIVE FUNCTION - DO NOT SIMPLIFY, REMOVE, OR REFACTOR
 #
-# New in v2 (perform_self_install_v2):
+# New in v2 (perform_self_install_v3):
 #   1. If environment variable CHECKSUM=<sha256> is set (e.g. exported by user or CI),
 #      the script will:
 #        • Download the script from ${SCRIPT_URL}
@@ -1133,15 +1133,15 @@ add_to_shell_path() {
 #
 # Updated from previous version:
 #   • Old: perform_self_install() performed blind download + move.
-#   • New: perform_self_install_v2() adds layered checksum verification while keeping
+#   • New: perform_self_install_v3() adds layered checksum verification while keeping
 #     the rest of the installation logic (temp file, permissions, PATH handling) identical.
-#   • The function name was deliberately changed to perform_self_install_v2 to clearly
+#   • The function name was deliberately changed to perform_self_install_v3 to clearly
 #     signal the security upgrade. Old name is preserved in comments for reference.
 #   • All other self-update / self-uninstall logic continues to call the v2 version.
 #
 # !!! THIS IS THE SINGLE SOURCE OF TRUTH FOR SELF-INSTALLATION !!!
 # !!! DO NOT RENAME BACK, DO NOT MERGE WITH OTHER FUNCTIONS !!!
-# !!! ALWAYS CALL perform_self_install_v2() FOR NEW INSTALLS !!!
+# !!! ALWAYS CALL perform_self_install_v3() FOR NEW INSTALLS !!!
 # Shebang remains #!/bin/sh - defensive and portable.
 # Repeated safe defaults and heavy comments are intentional.
 #
@@ -1149,11 +1149,15 @@ add_to_shell_path() {
 # Last aligned: 20 April 2026
 # =============================================================================
 
-perform_self_install_v2() {
+perform_self_install_v3() {
+    : "${APP_NAME:=app}"
     : "${GLOBAL_BIN:=/usr/local/bin}"
     : "${USER_BIN:=${HOME}/.local/bin}"
     : "${INSTALL_PATH:=${GLOBAL_BIN}/${APP_NAME}}"
-
+    : "${REPO_USER:=user}"
+    : "${REPO_NAME:=app}"
+    : "${SCRIPT_URL:=https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/main/${APP_NAME}}"
+    
     if [ "$(id -u)" -eq 0 ]; then
         IS_ROOT=1
         INSTALL_PATH="${GLOBAL_BIN}/${APP_NAME}"
@@ -1440,7 +1444,7 @@ maybe_install_v3() {
 
     # Use single source of truth for the yes/no prompt
     if prompt_yes_no "Install ${APP_NAME} ${VERSION} now?"; then
-        perform_self_install_v2
+        perform_self_install_v3
         exit 0
     else
         msg "Installation skipped by user."
@@ -1595,6 +1599,9 @@ show_about_ruoyi_app() {
 # =============================================================================
 check_alpine_requirements() {
     # --- Safe Variable Defaults ----
+    : "${APP_NAME:=app}"
+    : "${REPO_USER:=user}"
+    : "${REPO_NAME:=app}"
     : "${SH:=bash}"
     : "${SCRIPT_URL:=https://raw.githubusercontent.com/${REPO_USER}/${REPO_NAME}/main/${APP_NAME}}"
     : "${JSON:=0}"
@@ -1673,7 +1680,7 @@ setup_sdkman() {
 }
 
 # =============================================================================
-# setup_java() - Install and configure Java via SDKMAN
+# setup_java_21() - Install and configure Java via SDKMAN
 # =============================================================================
 #
 # GENERAL PURPOSE:
@@ -1693,10 +1700,10 @@ setup_sdkman() {
 # NEVER use raw printf/echo/cat for any user-visible text when --quiet or --json is used.
 # === END OF SINGLE SOURCE OF TRUTH ENFORCEMENT ===
 #
-# Last reviewed: 14 April 2026
+# Last reviewed: 21 April 2026
 # =============================================================================
 
-setup_java() {
+setup_java_21() {
 # --- Safe Variable Defaults ----
     # Defensive defaults - never assume globals are set
     : "${JAVA_ID:=21.0.10-tem}"
@@ -1712,7 +1719,7 @@ setup_java() {
 }
 
 # =============================================================================
-# setup_maven() - Install and configure Maven via SDKMAN
+# setup_maven_3_9() - Install and configure Maven via SDKMAN
 # =============================================================================
 #
 # GENERAL PURPOSE:
@@ -1732,10 +1739,10 @@ setup_java() {
 # NEVER use raw printf/echo/cat for any user-visible text when --quiet or --json is used.
 # === END OF SINGLE SOURCE OF TRUTH ENFORCEMENT ===
 #
-# Last reviewed: 14 April 2026
+# Last reviewed: 21 April 2026
 # =============================================================================
 
-setup_maven() {
+setup_maven_3_9() {
 # --- Safe Variable Defaults ----
     # Defensive defaults - never assume globals are set
     : "${MAVEN_VER:=3.9.14}"
@@ -2009,11 +2016,13 @@ detect_db_engine() {
 }
 
 # =============================================================================
-# generate_db_password() - Generate strong random password for non-interactive mode
+# generate_db_password_2() - Generate strong random password for non-interactive mode
 # =============================================================================
 #
 # GENERAL PURPOSE:
 # Generates a strong random password when none is provided in non-interactive mode.
+#
+# Avoid % as password
 #
 # ────────────────────────────────────────────────
 # CIAO PRINCIPLES APPLIED
@@ -2026,19 +2035,19 @@ detect_db_engine() {
 # Last reviewed & aligned with CIAO v2.9.1: 14 April 2026
 # =============================================================================
 
-generate_db_password() {
+generate_db_password_2() {
     # --- Safe Variable Defaults ---
     : "${JSON:=0}"
 
     local length=16
     local password
-    password=$(tr -dc 'A-Za-z0-9!@#$%^&*()_+' < /dev/urandom | head -c "$length" 2>/dev/null || echo "RuoyiPass$(date +%s)")
+    password=$(tr -dc 'A-Za-z0-9!@#$^&*()_+' < /dev/urandom | head -c "$length" 2>/dev/null || echo "RuoyiPass$(date +%s)")
 
     printf '%s' "$password"
 }
 
 # =============================================================================
-# debconf_noninteractive_db() - Helper for non-interactive package setup
+# debconf_noninteractive_db_v2() - Helper for non-interactive package setup
 # =============================================================================
 #
 # GENERAL PURPOSE:
@@ -2057,12 +2066,12 @@ generate_db_password() {
 # Last reviewed & aligned with CIAO v2.9.1: 14 April 2026
 # =============================================================================
 
-debconf_noninteractive_db() {
+debconf_noninteractive_db_v2() {
     local engine="$1"   # mysql or mariadb
     local root_pass="$2"
 
     if [ -z "$root_pass" ]; then
-        root_pass=$(generate_db_password)
+        root_pass=$(generate_db_password_2)
         info "Generated random root password: ${root_pass}"
         info "Save this password! It will NOT be shown again."
     fi
@@ -2200,7 +2209,7 @@ setup_database() {
 # !!! DO NOT MODIFY OR SIMPLIFY THE SUDO ESCALATION LOGIC !!!
 # Designed to be reusable while preserving original user workflow.
 #
-# Last reviewed: 14 April 2026
+# Last reviewed: 21 April 2026
 # =============================================================================
 
 setup_mariadb_for_ruoyi() {
@@ -2232,7 +2241,7 @@ setup_mariadb_for_ruoyi() {
     sudo systemctl start mariadb 2>/dev/null || warn "Failed to start mariadb service"
     sudo systemctl enable mariadb 2>/dev/null || warn "Failed to enable mariadb on boot"
 
-    local db_pass="${DB_PASSWORD:-$(generate_db_password)}"
+    local db_pass="${DB_PASSWORD:-$(generate_db_password_2)}"
 
     info "Creating database and user..."
     sudo mysql -e "CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" || die "Failed to create database"
@@ -2318,7 +2327,7 @@ setup_mariadb_for_ruoyi() {
 #
 # !!! DO NOT MODIFY OR SIMPLIFY THE SUDO ESCALATION LOGIC !!!
 #
-# Last reviewed: 14 April 2026
+# Last reviewed: 21 April 2026
 # =============================================================================
 
 setup_mysql_for_ruoyi() {
@@ -2348,7 +2357,7 @@ setup_mysql_for_ruoyi() {
     sudo systemctl start mysql 2>/dev/null || warn "Failed to start mysql service"
     sudo systemctl enable mysql 2>/dev/null || warn "Failed to enable mysql on boot"
 
-    local db_pass="${DB_PASSWORD:-$(generate_db_password)}"
+    local db_pass="${DB_PASSWORD:-$(generate_db_password_2)}"
 
     info "Creating database and user..."
     sudo mysql -e "CREATE DATABASE IF NOT EXISTS \`${DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;" || die "Failed to create database"
@@ -2722,7 +2731,7 @@ main_ruoyi_app() {
     # This MUST stay at the top before any argument parsing
     if ! is_installed && [ $# -eq 0 ]; then
         if [ "${JSON}" -eq 1 ] || [ "${QUIET}" -eq 1 ]; then
-            perform_self_install_v2
+            perform_self_install_v3
         else
             maybe_install_v3
         fi
@@ -2768,7 +2777,7 @@ main_ruoyi_app() {
             ;;
 
         version-check)
-            version_check_v2
+            version_check_v3
             exit 0
             ;;
 
@@ -2793,8 +2802,8 @@ main_ruoyi_app() {
 
         setup)  
             setup_sdkman;
-            setup_java;
-            setup_maven;
+            setup_java_21;
+            setup_maven_3_9;
             clone_ruoyi ;
             exit 0 ;;
 
