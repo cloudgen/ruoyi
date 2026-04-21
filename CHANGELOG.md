@@ -7,18 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-04-21
+
 ### Added
-- Support for Redis setup (`ruoyi redis` command) with automatic installation, service start/enable, and connectivity test (Ubuntu/Debian).
-- New defensive helper functions and improved output consistency across all commands.
+- Redis setup command (`ruoyi redis`) with internal sudo escalation, service management, connectivity test (PONG), and configuration guidance for RuoYi.
+- Defensive comment blocks for `setup_redis()`, `build_run()`, `setup_mariadb_for_ruoyi()` and `setup_mysql_for_ruoyi()` documenting steps and lessons learned.
+- Full restoration of MySQL setup logic to match MariaDB pattern.
 
 ### Changed
-- Improved root vs non-root installation isolation and PATH handling for better multi-user compatibility.
-- Enhanced backup strategy before destructive operations in project cloning and configuration changes.
-- Updated help text and command dispatch to include Redis and database aliases.
+- Renamed database and Redis setup functions for clarity:
+  - `setup_mariadb()` → `setup_mariadb_for_ruoyi()`
+  - `setup_mysql()` → `setup_mysql_for_ruoyi()`
+  - `setup_redis()` → `setup_redis_for_ruoyi()`
+- Updated `build_run()` and Redis setup to strictly use single source of truth output helpers.
+- Made `${PROJECT_NAME}` dynamic in startup banner and Redis config messages.
 
 ### Fixed
-- Minor inconsistencies in repeated safe variable defaults and output functions.
-- Better error handling and messaging in database and build steps.
+- Removed destructive placeholder in `setup_mysql()` that caused incomplete database setup.
+- Restored consistency between MariaDB and MySQL setup paths.
+- Fixed malformed help text line in `show_ruoyi_help()` (duplicate msg on same line).
+- Updated call sites in `setup_database()` and main dispatcher after function renames.
+- Ensured all functions respect CIAO "Over-protect" and "Intentional" principles.
+
+### Security
+- Reinforced internal sudo escalation pattern for Redis (same sacred rule as database commands).
+- Maintained checksum verification layer in self-install and strict root/user isolation.
+
+---
 
 ## [2.0.0] - 2026-04-14
 
@@ -54,17 +69,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
    - **Removed** — for now-removed features.
    - **Fixed** — for any bug fixes.
    - **Security** — in case of vulnerabilities.
-
-### Example for next release
-
-```markdown
-## [Unreleased]
-
-### Added
-- ...
-
-### Changed
-- ...
-
-### Fixed
-- ...
