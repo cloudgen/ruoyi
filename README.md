@@ -1,6 +1,6 @@
 # ruoyi
 
-[![Version](https://img.shields.io/badge/Version-2.2.0-blue?style=flat-square)](https://github.com/cloudgen/ruoyi)
+[![Version](https://img.shields.io/badge/Version-2.2.2-blue?style=flat-square)](https://github.com/cloudgen/ruoyi)
 [![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)](LICENSE)
 [![CIAO](https://img.shields.io/badge/Philosophy-CIAO%20(Caution%20%E2%80%A2%20Intentional%20%E2%80%A2%20Anti--fragile%20%E2%80%A2%20Over--engineered)-purple.svg)](https://github.com/Wilgat/ciao)
 [![Made with CIAO](https://img.shields.io/badge/Made%20with%20❤️-CIAO-00AEEF?style=flat-square)](https://github.com/Wilgat/ciao)
@@ -9,11 +9,11 @@
 <img src="https://img.shields.io/badge/Maven-3.9.14-red?style=flat-square&logo=apachemaven" alt="Maven 3.9.14">
 <img src="https://img.shields.io/badge/RuoYi-最新版-blue?style=flat-square" alt="RuoYi Framework">
 
-Official Recommendation from [grok](https://grok.com/c/4b7eadd2-c00f-4c09-bc89-514877a70ede?rid=18f10296-ea94-45c5-b4fd-c13a754df318). The review is subbmited by [grokrec](https://github.com/cloudgen/grokrec). Please refers to [local copy](https://github.com/cloudgen/ruoyi/blob/main/RECOMMENDATION.md)
+Officially Reviewed and Recommended by [grok](https://grok.com/c/4b7eadd2-c00f-4c09-bc89-514877a70ede?rid=18f10296-ea94-45c5-b4fd-). Please refers to the local [copy](https://github.com/cloudgen/ruoyi/blob/main/RECOMMENDATION.md)
 
 **The friendliest one-command setup for RuoYi admin framework.**
 
-Part of the Cloudgen's defensive tool family (aligned with [ciao](https://github.com/cloudgen/ciao)).
+Built with **ShellParser** and part of the Cloudgen's defensive tool family.
 
 ---
 
@@ -22,22 +22,20 @@ Part of the Cloudgen's defensive tool family (aligned with [ciao](https://github
 - One-liner install (`curl | bash`)
 - Supports both **user** (`~/.local/bin`) and **system** (`/usr/local/bin`) installation
 - Automatically installs **SDKMAN!** + pinned **Java 21 (Temurin)** + **Maven 3.9.14**
-- Clones the official RuoYi project and configures it (Java version, server port, etc.)
-- Optional **MariaDB** (default) or **MySQL** database setup with schema import
+- Clones the official RuoYi project and configures it safely
+- Smart **MariaDB** (default) / **MySQL** database setup with intelligent credential handling
 - **Redis** setup support (`ruoyi redis`)
-- **Project preservation by default** — safe backups before any destructive changes
-- Full self-management: `self-update`, `version-check`, `self-uninstall`, `about`
-- Rich flags: `--force`, `--project-dir`, `--mariadb`, `--mysql`, `--quiet`, `--json`
-- Multi-shell PATH setup (bash, zsh, fish)
-- Extremely defensive **CIAO** coding style with repeated safe defaults and anti-simplification guards
-- Single-source-of-truth output system (`output_text` / `output_json`)
-- Works great in containers, CI, Alpine Linux, Git Bash, etc.
+- Full support for custom project folders via `--project`
+- Excellent **automation & AI agent** support (`--quiet` + `--json`)
+- **Interactive** + **non-interactive** friendly database setup
+- Strong preference against using `root` database user in production
+- Self-management: `self-update`, `version-check`, `self-uninstall`, `about`, `db-extract`
 
 ---
 
 ## 🚀 Quick Installation
 
-**For normal users:**
+**Normal user:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/cloudgen/ruoyi/main/ruoyi | bash
 ```
@@ -47,73 +45,80 @@ curl -fsSL https://raw.githubusercontent.com/cloudgen/ruoyi/main/ruoyi | bash
 curl -fsSL https://raw.githubusercontent.com/cloudgen/ruoyi/main/ruoyi | sudo bash
 ```
 
-After installation, simply run:
+After installation, run:
 ```bash
-ruoyi
+ruoyi mariadb    # Recommended database setup
 ```
-
-The application will start at **http://localhost:8080** (default login: **admin** / **admin123**)
 
 ---
 
 ## 📖 Usage
 
+### Main Commands
 ```bash
-ruoyi                    # Full setup: SDKMAN + Java + Maven + clone + build
-ruoyi --mariadb          # Setup with MariaDB (recommended default)
-ruoyi --mysql            # Setup with Oracle MySQL
-ruoyi mariadb            # Alias for MariaDB setup
-ruoyi redis              # Install & start Redis (requires sudo)
-ruoyi run                # Build and run the project
-ruoyi --project-dir <path>   # Use a custom project directory
-ruoyi --force            # Force reset (with backup)
-ruoyi about              # Full diagnostics (SDKMAN, Java, Maven, project status)
-ruoyi version-check      # Check for newer version
-ruoyi self-update        # Update ruoyi script itself
-ruoyi self-uninstall     # Remove from the system
-ruoyi help               # Show this help
+ruoyi                    # Full initial setup
+ruoyi mariadb            # Setup MariaDB (default & recommended)
+ruoyi mysql              # Setup Oracle MySQL
+ruoyi redis              # Install & start Redis
+ruoyi run                # Build and start the application
+ruoyi about              # Show full diagnostics
+ruoyi db-extract         # Show current DB credentials
 ```
 
-### Key Behaviors
-- Normal run preserves your existing project and performs safe backups before changes.
-- `--force` triggers a full reset (old project is backed up first).
-- Database setup (`mariadb` / `mysql`) requires sudo privileges but can be run directly as a normal user (internal escalation).
+### Important Flags
+- `--project <path>` — Custom project directory (absolute path handling)
+- `--quiet` — Suppress non-error output
+- `--json` — Machine-readable JSON output
+- `--force` — Force reset with backup
+
+### Database Setup Behavior
+**Interactive**: Prompts to avoid `root` user and create dedicated `ruoyi_user`.  
+**Non-interactive**: Auto-fallback to dedicated user + random password.
+
+---
+
+## 🤖 ShellParser Architecture
+
+This project is built using **[ShellParser](https://github.com/cloudgen/ShellParser)** — a modular, defensive shell scripting framework.
+
+### ShellParser Philosophy
+- **Modular & Maintainable**: Functions are cleanly categorized (`db_`, `out_`, `inst_`, `util_`, etc.)
+- **CIAO Compliant**: Every component follows **Caution • Intentional • Anti-fragile • Over-protect** principles
+- **Anti-simplification**: Protection zones prevent destructive "cleanups"
+- **Automation First**: Designed for AI agents, CI/CD, and scriptable environments
+- **Battle-tested**: Used across multiple defensive tools (ruoyi, git-sync, ciao, etc.)
+
+ShellParser enables this project to remain extremely robust while staying human-readable and AI-agent friendly.
+
+---
+
+## 🤖 Designed for Automation & AI Agents
+
+- `--json` + `--quiet` modes for perfect machine control
+- Predictable behavior in headless environments
+- `db-extract` for easy credential retrieval by agents
+- Absolute path handling and strict error reporting
 
 ---
 
 ## Important Platform Notes
 
-### Alpine Linux
-Requires **bash** (SDKMAN! does not work reliably under BusyBox ash).
-```bash
-apk add bash
-bash <(curl -fsSL https://raw.githubusercontent.com/cloudgen/ruoyi/main/ruoyi)
-```
-
-### Database Setup
-- MariaDB is the **default** and recommended engine.
-- Redis setup assumes Ubuntu/Debian (`apt`). Other distros may need manual adjustment.
-
-### Other Platforms
-- **Ubuntu/Debian**, **macOS**, **Git Bash (Windows)** — well supported.
-- The script includes extensive defensive fallbacks for harsh environments.
+- **Alpine Linux**: Requires `bash`
+- **Database**: MariaDB recommended. Respects config DB name (`ry` or `ruoyi_db`)
 
 ---
 
 ## Project Philosophy
 
-`ruoyi` follows the strict **CIAO** defensive coding philosophy (**Caution • Intentionality • Anti-fragility • Ownership**).
+`ruoyi` follows the strict **CIAO** defensive coding philosophy and is powered by **ShellParser**.
 
-Heavy comments, repeated safe defaults, and `!!! DO NOT MODIFY OR SIMPLIFY !!!` blocks are intentional — they protect the script from accidental breakage in containers, minimal systems, and non-interactive environments (like `curl | bash`).
-
-This tool belongs to the same defensive family as `springboot2` / `springboot3` / `springboot4`.
+Heavy comments and protection zones are intentional for long-term stability.
 
 ---
 
 ## Contributing
 
-Please respect the strict defensive coding style and protective comments when submitting changes.  
-Any attempt to "clean up" or heavily simplify the code may be rejected in favor of long-term robustness and anti-fragility.
+Please respect CIAO + ShellParser architecture and protection zones.
 
 ---
 
