@@ -1,0 +1,161 @@
+# ShellParser.skill
+# Master Skill for Safe, Modular Shell Script Development
+
+## Philosophy
+
+Use ShellParser to break large shell scripts into tiny, focused component files.  
+This eliminates dangerous manual copy-paste into a monolithic file, reduces errors, and makes rollback trivial.
+
+**Core Principle**:  
+**Never ask the user to manually locate and replace code blocks in a large file.**  
+Instead, always work on tiny component files under `target/components/` and instruct the user to run a precise `shell-parser replace` command.
+
+---
+
+**CIAO-Lite Rules (Strictly Follow These - Highest Priority)**
+
+You are now operating under **CIAO-Lite** principles.
+
+- **C - Caution**: Include reasonable validation, clear error messages. Never let things fail silently.
+- **I - Intentional**: Preserve and respect the explicit intention behind the code. Keep "why" clear.
+- **A - Anti-fragile**: Respect backup patterns and environment flexibility.
+- **O - Over-protect**: **Never simplify, refactor, or remove** any code inside CIAO-Lite Protection Zones unless the user explicitly instructs to redesign that section.
+
+**Key Behavioral Rules:**
+- Make the smallest change necessary to fulfill the user's exact request.
+- Do not rewrite large portions or offer unsolicited improvements.
+- Once the requested change is done correctly and protected areas remain safe, clearly state the task is complete and stop.
+- Respect previously working code and Protection Zones.
+
+**Reference:**  
+CIAO = https://github.com/cloudgen/ciao
+
+**Critical Reflection (read and internalize this first):**
+
+The problem of over-thinking and over-engineering causes extra work and increases the number of back-and-forth. It is not a smart move because instead of simplifying, it makes things more complex. It is not engineering, but destruction of the original intention.
+
+Therefore, when I give an instruction, deliver exactly what I asked for in one complete response without adding your own interpretations, partial versions, or unnecessary refinements. Fast convergence with minimal interaction is the goal.
+
+**Core Behavior when I ask for function name standardization:**
+
+When I give you a script or ask to update function names, you must **automatically** do the following in **one single complete response**:
+
+1. Collect all function names from the current script I provided.
+2. Assign logical categories.
+3. Think of good, short, obvious prefixes (project-specific prefixes like `ruo_` are allowed and useful).
+4. Prepare a **FULL FUNCTION NAMING TABLE**.
+5. Generate a complete `sed`-based rename helper script using `#!/bin/sh`.
+
+## Installation
+
+```bash
+pip install ShellParser
+```
+
+---
+
+## Core Workflow (Recommended)
+
+### 1. Initial Split (Do this once)
+
+```bash
+shell-parser split git-sync
+```
+
+This creates many small, clean files in `target/components/`.
+
+### 2. Editing Strategy (Preferred)
+
+- Open the relevant tiny file, e.g.:
+  ```bash
+  target/components/git_sync_main_loop.sh
+  ```
+
+- Make your changes (you can rewrite the **entire** function if needed).
+
+- Tell the user to run the exact command:
+
+  ```bash
+  shell-parser replace git-sync git_sync_main_loop
+  ```
+
+**Why this is better**:
+- No need to find the right location in a 2000+ line file.
+- Full function is replaced atomically.
+- ShellParser automatically creates a dated backup (`git-sync.20260428-5`).
+- Extremely low risk of paste errors.
+
+### 3. Rollback (Very Easy)
+
+If something goes wrong:
+
+```bash
+# List recent backups
+ls -1 git-sync.20* | tail
+
+# Restore from backup
+cp git-sync.20260428-5 git-sync
+
+# Or compare changes first
+diff git-sync git-sync.20260428-5 | less
+```
+
+### 4. Other Useful Commands
+
+```bash
+# Interactive mode (lets user choose function)
+shell-parser replace git-sync
+
+# Re-split everything (use when major restructuring is needed)
+shell-parser split git-sync
+```
+
+---
+
+## How AI Should Assist (Strict Rules)
+
+When helping with code changes:
+
+1. **Always** provide the full updated content of the component file.
+2. **Immediately after** the code block, show the exact command the user must run:
+
+   ```bash
+   shell-parser replace git-sync <function_name>
+   ```
+
+   Example:
+
+   ```markdown
+   **Replace the content of `target/components/git_sync_main_loop.sh` with:**
+
+   ```sh
+   # ... full function here ...
+   ```
+
+   Then run:
+
+   ```bash
+   shell-parser replace git-sync git_sync_main_loop
+   ```
+   ```
+
+3. Remind the user that they can easily rollback using the dated backup.
+
+4. Prefer working on one small function at a time rather than large refactors.
+
+---
+
+## Benefits of This Approach
+
+- Extremely low chance of paste errors or wrong location.
+- Easy `diff` comparison with backups.
+- User does not need to remember complex commands — AI reminds them every time.
+- Maintains perfect `curl | sh` compatibility.
+- Aligns with CIAO principles (Caution, Anti-fragile).
+
+---
+
+**AI Instruction**:  
+Whenever the user asks to modify git-sync (or any ShellParser-managed script), first check if `target/components/` exists. If not, recommend running `shell-parser split`. Then always respond using the "full component file + replace command" pattern above.
+
+Last updated: 2026-04-28

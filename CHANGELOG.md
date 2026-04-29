@@ -5,7 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+## [2.2.2] - 2026-04-29
+
+### Changed
+- Migrated to modular ShellParser architecture for better maintainability
+- Flattened versioned function names (`_v1`, `_v2`, `_v3` etc.) to clean names
+- Adopted consistent categorized function naming convention (e.g. `out_`, `inst_`, `ver_`, `path_`, `db_`, `env_`, `util_`)
+- Updated core output system to match latest git-sync defensive style
+- Improved self-install, self-update, and self-uninstall logic
+- Enhanced `main_ruoyi_app` dispatcher with better flag parsing
+
+### Added
+- Full ShellParser support (`target/components/` structure)
+- Comprehensive rename helper script (`rename-helper.sh`)
+- Stronger CIAO-Lite Protection Zone compliance
+
+### Technical
+- Switched many internal components to use `#!/bin/sh` compatible patterns where possible while keeping Bash for SDKMAN compatibility
+- Preserved all original defensive comments and safety patterns
+
+---
+
+## [2.2.1] - 2026-04-28
+
+### Added
+- Initial ShellParser modular structure
+- Merged clean components from git-sync project
+- Full function renaming and categorization system
+
+### Changed
+- Major refactoring to align with latest CIAO-Lite standards
+- Improved self-install with checksum verification
+- Enhanced database setup (MariaDB/MySQL) with internal sudo escalation
+
+---
 
 ## [2.1.0] - 2026-04-21
 
